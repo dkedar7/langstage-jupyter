@@ -1,11 +1,9 @@
 <p align="center">
-  <a href="https://fastdash.app/"><img src="https://storage.googleapis.com/deepagents/cover.png" alt="Fast Dash" width=600></a>
+  <img src="https://storage.googleapis.com/deepagents/cover.png" alt="DeepAgent Lab" width=600>
 </p>
+
 <p align="center">
     <em>Bring LangChain agents into your JupyterLab workflow</em>
-</p>
-
-
 </p>
 
 ---
@@ -16,6 +14,12 @@
 ---
 
 A JupyterLab extension to allow **your** LangChain agents access to JuputerLab notebooks and files, enabling natural language interactions with your data science projects **directly from JupyterLab**.
+
+<p align="center">
+  <img src="https://storage.googleapis.com/deepagents/screenshot1.png" alt="DeepAgent Lab Demo" width=800>
+</p>
+
+Watch the full demo video here: [https://www.youtube.com/watch?v=vGA2vzMSQzo](https://www.youtube.com/watch?v=vGA2vzMSQzo)
 
 ## Features
 
