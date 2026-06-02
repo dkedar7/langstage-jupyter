@@ -13,7 +13,11 @@ load_dotenv()
 
 # Import configuration
 from . import config
-from .langgraph_utils import stream_graph_updates, prepare_agent_input
+from langgraph_stream_parser import (
+    stream_graph_updates,
+    prepare_agent_input,
+    load_agent_spec,
+)
 
 
 class AgentWrapper:
@@ -60,134 +64,32 @@ class AgentWrapper:
 
         self._load_agent()
 
-    def _load_agent_from_file(self, file_path: Path, variable_name: Optional[str] = None):
-        """
-        Load agent from a Python file path.
-
-        Args:
-            file_path: Path to Python file containing agent
-            variable_name: Optional variable name to extract
-
-        Returns:
-            Loaded agent object
-
-        Raises:
-            ImportError: If file not found or cannot be loaded
-            AttributeError: If variable not found in module
-        """
-        file_path = file_path.resolve()
-
-        if not file_path.exists():
-            raise ImportError(f"Agent file not found: {file_path}")
-
-        # Create a unique module name to avoid conflicts
-        module_name = f"custom_agent_{file_path.stem}_{id(file_path)}"
-
-        # Load the module from file
-        spec = importlib.util.spec_from_file_location(module_name, file_path)
-        if spec is None or spec.loader is None:
-            raise ImportError(f"Failed to create module spec from {file_path}")
-
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[module_name] = module
-        spec.loader.exec_module(module)
-
-        # Extract the agent variable
-        if variable_name:
-            if not hasattr(module, variable_name):
-                raise AttributeError(
-                    f"Module {file_path} does not have '{variable_name}' attribute"
-                )
-            return getattr(module, variable_name)
-        else:
-            # Try default names
-            if hasattr(module, 'agent'):
-                return module.agent
-            elif hasattr(module, 'graph'):
-                return module.graph
-            else:
-                raise AttributeError(
-                    f"Module {file_path} does not have 'agent' or 'graph' attribute"
-                )
-
-    def _load_agent_from_module(self, module_path: str, variable_name: Optional[str] = None):
-        """
-        Load agent from a Python module path.
-
-        Args:
-            module_path: Python module path (e.g., "my_package.agent")
-            variable_name: Optional variable name to extract
-
-        Returns:
-            Loaded agent object
-
-        Raises:
-            ImportError: If module cannot be imported
-            AttributeError: If variable not found in module
-        """
-        module = importlib.import_module(module_path)
-
-        # Extract the agent variable
-        if variable_name:
-            if not hasattr(module, variable_name):
-                raise AttributeError(
-                    f"Module {module_path} does not have '{variable_name}' attribute"
-                )
-            return getattr(module, variable_name)
-        else:
-            # Try default names
-            if hasattr(module, 'agent'):
-                return module.agent
-            elif hasattr(module, 'graph'):
-                return module.graph
-            else:
-                raise AttributeError(
-                    f"Module {module_path} does not have 'agent' or 'graph' attribute"
-                )
-
     def _load_agent(self):
-        """
-        Load the agent from the specified module or file path.
+        """Load the agent via the shared host loader.
 
-        Automatically detects whether agent_module_path is a file path or module path:
-        - If it ends with .py or contains / or \\, treat as file path
-        - Otherwise, treat as module path
+        Builds a ``module_or_path:variable`` spec from the resolved module
+        path + variable name and delegates to
+        ``langgraph_stream_parser.host.load_agent_spec`` (which handles both
+        file paths and dotted module paths). When no explicit variable name
+        was requested, falls back from ``agent`` to ``graph`` — preserving the
+        extension's historical default-name behavior.
         """
+        var = self.agent_variable_name or "agent"
         try:
-            # Determine if this is a file path or module path
-            is_file_path = (
-                self.agent_module_path.endswith('.py') or
-                '/' in self.agent_module_path or
-                '\\' in self.agent_module_path or
-                self.agent_module_path.startswith('.')
-            )
-
-            if is_file_path:
-                # Load from file path
-                file_path = Path(self.agent_module_path)
-                self.agent = self._load_agent_from_file(file_path, self.agent_variable_name)
-                print(f"Loaded agent from file: {file_path}")
-                if self.agent_variable_name:
-                    print(f"  Variable: {self.agent_variable_name}")
-            else:
-                # Load from module path
-                self.agent = self._load_agent_from_module(
-                    self.agent_module_path,
-                    self.agent_variable_name
-                )
-                print(f"Loaded agent from module: {self.agent_module_path}")
-                if self.agent_variable_name:
-                    print(f"  Variable: {self.agent_variable_name}")
-
-        except ImportError as e:
-            print(f"Warning: Could not import agent module '{self.agent_module_path}': {e}")
-            print("Agent functionality will not be available until the module is created.")
+            self.agent = load_agent_spec(f"{self.agent_module_path}:{var}")
+            print(f"Loaded agent: {self.agent_module_path}:{var}")
+        except (ValueError, FileNotFoundError, ImportError, AttributeError) as e:
+            # No explicit variable requested → try the legacy 'graph' fallback.
+            if self.agent_variable_name is None:
+                try:
+                    self.agent = load_agent_spec(f"{self.agent_module_path}:graph")
+                    print(f"Loaded agent: {self.agent_module_path}:graph")
+                    return
+                except Exception:
+                    pass
+            print(f"Warning: Could not load agent '{self.agent_module_path}': {e}")
             if config.AGENT_SPEC:
                 print(f"Note: DEEPAGENT_AGENT_SPEC is set to: {config.AGENT_SPEC}")
-            self.agent = None
-        except AttributeError as e:
-            print(f"Warning: {e}")
-            print("Agent functionality will not be available.")
             self.agent = None
         except Exception as e:
             print(f"Error loading agent: {e}")

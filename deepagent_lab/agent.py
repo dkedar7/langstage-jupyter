@@ -5,15 +5,16 @@ This agent is used when no custom agent is specified. It provides basic
 notebook manipulation capabilities with filesystem access.
 """
 import os
+import queue
+import time
 from pathlib import Path
 from typing import Annotated
 
 from dotenv import load_dotenv
 load_dotenv()
 
-from deepagents import create_deep_agent
-from deepagents.backends import FilesystemBackend
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph_stream_parser.demo import create_default_agent as _build_default_agent
+from langchain.chat_models import init_chat_model
 
 # Import configuration
 from deepagent_lab import config
@@ -44,6 +45,10 @@ JUPYTER_TOKEN = config.JUPYTER_TOKEN
 # Model configuration
 MODEL_NAME = config.MODEL_NAME
 MODEL_TEMPERATURE = config.MODEL_TEMPERATURE
+
+# Total seconds to wait for a single cell to finish executing before reporting
+# possibly-incomplete output. Override via DEEPAGENT_EXECUTE_TIMEOUT.
+EXECUTE_TIMEOUT = config.get_config("execute_timeout", default=300.0, type_cast=float)
 
 # === Tool Definitions ===
 
@@ -389,48 +394,64 @@ def execute_cell(
     
     client = kernel_clients[notebook_path]
     msg_id = client.execute(cell.source)
-    
+
     # Collect outputs and execution count
     outputs = []
     execution_count = None
     output_texts = []
-    
+
+    # Total-time budget for the whole cell. Poll iopub in short slices so we
+    # can both honour the budget and avoid bailing out prematurely just because
+    # a long-running cell went quiet between messages.
+    deadline = time.monotonic() + EXECUTE_TIMEOUT
+    timed_out = False
     while True:
-        try:
-            msg = client.get_iopub_msg(timeout=5)
-            if msg['parent_header'].get('msg_id') != msg_id:
-                continue
-            
-            msg_type = msg['header']['msg_type']
-            content = msg['content']
-            
-            if msg_type == 'execute_input':
-                execution_count = content['execution_count']
-            elif msg_type == 'stream':
-                output = nbformat.v4.new_output('stream', 
-                    name=content['name'], text=content['text'])
-                outputs.append(output)
-                output_texts.append(f"[{content['name']}] {content['text']}")
-            elif msg_type == 'execute_result':
-                output = nbformat.v4.new_output('execute_result',
-                    data=content['data'], execution_count=content['execution_count'])
-                outputs.append(output)
-                output_texts.append(content['data'].get('text/plain', str(content['data'])))
-            elif msg_type == 'display_data':
-                output = nbformat.v4.new_output('display_data', data=content['data'])
-                outputs.append(output)
-                output_texts.append(f"[display] {content['data'].get('text/plain', 'Rich content')}")
-            elif msg_type == 'error':
-                output = nbformat.v4.new_output('error',
-                    ename=content['ename'], evalue=content['evalue'], 
-                    traceback=content['traceback'])
-                outputs.append(output)
-                error_msg = f"ERROR: {content['ename']}: {content['evalue']}\n" + '\n'.join(content['traceback'])
-                output_texts.append(error_msg)
-            elif msg_type == 'status' and content['execution_state'] == 'idle':
-                break
-        except:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            timed_out = True
             break
+        try:
+            msg = client.get_iopub_msg(timeout=min(1.0, remaining))
+        except queue.Empty:
+            continue
+
+        if msg['parent_header'].get('msg_id') != msg_id:
+            continue
+
+        msg_type = msg['header']['msg_type']
+        content = msg['content']
+
+        if msg_type == 'execute_input':
+            execution_count = content['execution_count']
+        elif msg_type == 'stream':
+            output = nbformat.v4.new_output('stream',
+                name=content['name'], text=content['text'])
+            outputs.append(output)
+            output_texts.append(f"[{content['name']}] {content['text']}")
+        elif msg_type == 'execute_result':
+            output = nbformat.v4.new_output('execute_result',
+                data=content['data'], execution_count=content['execution_count'])
+            outputs.append(output)
+            output_texts.append(content['data'].get('text/plain', str(content['data'])))
+        elif msg_type == 'display_data':
+            output = nbformat.v4.new_output('display_data', data=content['data'])
+            outputs.append(output)
+            output_texts.append(f"[display] {content['data'].get('text/plain', 'Rich content')}")
+        elif msg_type == 'error':
+            output = nbformat.v4.new_output('error',
+                ename=content['ename'], evalue=content['evalue'],
+                traceback=content['traceback'])
+            outputs.append(output)
+            error_msg = f"ERROR: {content['ename']}: {content['evalue']}\n" + '\n'.join(content['traceback'])
+            output_texts.append(error_msg)
+        elif msg_type == 'status' and content['execution_state'] == 'idle':
+            break
+
+    if timed_out:
+        output_texts.append(
+            f"[deepagent-lab] Cell exceeded EXECUTE_TIMEOUT={EXECUTE_TIMEOUT}s; "
+            "output above may be incomplete. Set DEEPAGENT_EXECUTE_TIMEOUT to raise the budget."
+        )
     
     # Update cell in notebook
     cell.execution_count = execution_count
@@ -470,7 +491,7 @@ system_prompt = """You're a JupyterLab assistant. Use the provided tools to mani
 # Tools for writing Jupyter Notebooks:
 - `get_notebook_state(notebook_path: str) -> str`: Gets the current state of a notebook, including total cells, executed/unexecuted cells, and the recommended next insertion index.
 - `create_notebook(notebook_path: str) -> str`: Creates a new empty Jupyter notebook file at the specified path. Returns a confirmation message.
-- `insert_code_cell(code: str, notebook_path: str, position: int = -1) -> str`: Inserts a new code cell with the given code into the specified notebook at the given position (default is to append at the end). Returns the index of the inserted cell.
+- `insert_code_cell(code: str, notebook_path: str, cell_idx: int = -1) -> str`: Inserts a new code cell with the given code into the specified notebook at `cell_idx` (default -1 appends at the end). Returns the index of the inserted cell.
 - `modify_cell(notebook_path: str, cell_index: int, new_code: str) -> str`: Modifies the code of the cell at the specified index in the notebook. If `new_code` is an empty string, deletes the cell. Returns a confirmation message.
 - `execute_cell(notebook_path: str, cell_index: int) -> str`: Executes the code cell at the specified index in the notebook and updates its outputs. Returns the execution result or error message. Automatically starts a kernel if needed.
 
@@ -491,20 +512,18 @@ Assistant:
 - NEVER write a code cell and leave it unexecuted.
 """
 
-# Create backend with workspace configuration
-backend = FilesystemBackend(
-    root_dir=str(WORKSPACE),
-    virtual_mode=config.VIRTUAL_MODE
-)
+# Build the chat model so MODEL_TEMPERATURE is actually applied.
+chat_model = init_chat_model(MODEL_NAME, temperature=MODEL_TEMPERATURE)
 
-# Create agent with configuration
-agent = create_deep_agent(
+# Build via the shared demo factory (owns the FilesystemBackend + checkpointer
+# boilerplate). Lab supplies its nbformat notebook tools + system prompt.
+agent = _build_default_agent(
+    workspace=str(WORKSPACE),
+    model=chat_model,
     name="Default Agent",
-    model=MODEL_NAME,
     system_prompt=system_prompt,
-    backend=backend,
-    checkpointer=MemorySaver(),
     tools=[get_notebook_state, create_notebook, insert_code_cell, modify_cell, execute_cell],
+    virtual_mode=config.VIRTUAL_MODE,
 )
 
 # Log configuration if in debug mode

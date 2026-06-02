@@ -86,7 +86,7 @@ JUPYTER_SERVER_URL = get_config("jupyter_server_url", default="http://localhost:
 
 # === Model Configuration ===
 
-MODEL_NAME = get_config("model_name", default="anthropic:claude-sonnet-4-20250514")
+MODEL_NAME = get_config("model_name", default="anthropic:claude-sonnet-4-6")
 MODEL_TEMPERATURE = get_config("model_temperature", default=0.0, type_cast=float)
 
 # === Debug Configuration ===

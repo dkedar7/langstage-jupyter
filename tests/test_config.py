@@ -105,7 +105,7 @@ class TestConfigConstants:
         assert config.AGENT_SPEC is None
         assert config.JUPYTER_TOKEN == "12345"
         assert config.JUPYTER_SERVER_URL == "http://localhost:8889"
-        assert config.MODEL_NAME == "anthropic:claude-sonnet-4-20250514"
+        assert config.MODEL_NAME == "anthropic:claude-sonnet-4-6"
         assert config.MODEL_TEMPERATURE == 0.0
         assert config.DEBUG is False
         assert config.VIRTUAL_MODE is True
