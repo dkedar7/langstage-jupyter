@@ -218,3 +218,8 @@ tsconfig.tsbuildinfo
 deepagent_lab/labextension
 .yarn/
 release.sh
+
+# Galata / Playwright UI test artifacts
+ui-tests/test-results/
+ui-tests/playwright-report/
+ui-tests/playwright/.cache/

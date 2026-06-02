@@ -1,0 +1,16 @@
+{
+  "name": "deepagent-lab-ui-tests",
+  "version": "0.1.0",
+  "description": "Galata UI tests for deepagent-lab (not published)",
+  "private": true,
+  "scripts": {
+    "start": "jupyter lab --config jupyter_server_test_config.py",
+    "test": "jlpm playwright test",
+    "test:update": "jlpm playwright test --update-snapshots",
+    "test:debug": "PWDEBUG=1 jlpm playwright test"
+  },
+  "devDependencies": {
+    "@jupyterlab/galata": "^5.0.0",
+    "@playwright/test": "^1.40.0"
+  }
+}
