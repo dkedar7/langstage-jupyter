@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-06-02
+
+### Changed
+- **Shared streaming runtime.** Streaming now routes through `langgraph-stream-parser` (typed events + `stream_graph_updates`); the in-tree parser was removed. New dependency: `langgraph-stream-parser>=0.2,<0.3`.
+- **Shared config layer.** `LabConfig` subclasses the shared `HostConfig` and resolves through `defaults < deepagents.toml < DEEPAGENT_* env < overrides`, adding **`deepagents.toml`** support. `DEEPAGENT_AGENT_SPEC` is the canonical agent selector.
+- Default model bumped to `claude-sonnet-4-6`.
+
+### Fixed
+- **`insert_code_cell` arg mismatch.** The system prompt documented a `position` argument, but the real parameter is `cell_idx` — models calling the documented name hit a `TypeError`.
+- **`execute_cell` silent truncation.** The iopub poll used a bare `except:` with a 5s per-message timeout, so long-running cells returned partial output as if they had finished. Replaced with a total-time budget (`DEEPAGENT_EXECUTE_TIMEOUT`, default 300s) that polls until the kernel reports idle and surfaces timeouts explicitly in the returned text.
+- **`MODEL_TEMPERATURE` ignored.** It was read from config but never passed to the model. The agent now builds a configured model via `init_chat_model` before handing it to `create_deep_agent`.
+
+### Added
+- Galata (Playwright) UI smoke test for the chat sidebar, plus a CI workflow. Runs against a model-free stub agent, so it needs no API key. Dev-only — not part of the published package.
+
 ## [0.1.4] - 2025-12-26
 
 ### Added
