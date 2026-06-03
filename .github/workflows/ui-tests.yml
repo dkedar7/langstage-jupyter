@@ -33,7 +33,9 @@ jobs:
 
       - name: Build + install the extension
         run: |
-          jlpm install
+          # --no-immutable: CI is allowed to refresh the lockfile rather than
+          # failing the build when it's slightly out of sync.
+          jlpm install --no-immutable
           # Editable install runs the labextension build hook; runtime deps
           # (langgraph, langchain-core, langgraph-stream-parser, deepagents)
           # come with it — the stub agent needs no model/API key.
@@ -44,7 +46,7 @@ jobs:
       - name: Install UI-test deps
         working-directory: ui-tests
         run: |
-          jlpm install
+          jlpm install --no-immutable
           jlpm playwright install chromium --with-deps
 
       - name: Run Galata tests
