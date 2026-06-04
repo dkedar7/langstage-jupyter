@@ -31,18 +31,18 @@
   --da-border-strong: var(--jp-border-color1, #cbd5e1);
   --da-border-subtle: var(--jp-border-color2, #e0e0e0);
 
-  /* Shadows */
-  --da-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.05);
-  --da-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.05);
-  --da-shadow-md: 0 2px 8px rgba(0, 0, 0, 0.06);
-  --da-shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.08);
-  --da-shadow-primary: 0 2px 8px rgba(37, 99, 235, 0.3);
-  --da-shadow-error: 0 2px 8px rgba(239, 68, 68, 0.15);
+  /* Shadows — flattened to match JupyterLab's flat surfaces */
+  --da-shadow-xs: none;
+  --da-shadow-sm: none;
+  --da-shadow-md: none;
+  --da-shadow-lg: none;
+  --da-shadow-primary: none;
+  --da-shadow-error: none;
 
-  /* Border Radius */
-  --da-radius-sm: 2px;
-  --da-radius-md: 3px;
-  --da-radius-lg: 4px;
+  /* Border Radius — coherent scale anchored to JupyterLab's radius */
+  --da-radius-sm: var(--jp-border-radius, 2px);
+  --da-radius-md: 4px;
+  --da-radius-lg: 6px;
   --da-radius-full: 50%;
 
   /* Spacing Scale */
@@ -54,13 +54,14 @@
   --da-space-6: 24px;
   --da-space-8: 32px;
 
-  /* Typography Scale */
-  --da-text-xs: 10px;
-  --da-text-sm: 11px;
-  --da-text-base: 12px;
-  --da-text-md: 13px;
-  --da-text-normal: 14px;
-  --da-text-lg: 15px;
+  /* Typography Scale — aligned to JupyterLab UI font sizes, floor raised
+     from 10px for legibility */
+  --da-text-xs: 11px;
+  --da-text-sm: 12px;
+  --da-text-base: var(--jp-ui-font-size1, 13px);
+  --da-text-md: var(--jp-ui-font-size1, 13px);
+  --da-text-normal: var(--jp-ui-font-size1, 13px);
+  --da-text-lg: var(--jp-ui-font-size2, 15px);
 
   /* Font Weights */
   --da-weight-normal: 400;
@@ -74,9 +75,9 @@
   --da-leading-normal: 1.5;
   --da-leading-relaxed: 1.75;
 
-  /* Font Families */
-  --da-font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --da-font-mono: 'Monaco', 'Menlo', 'Consolas', monospace;
+  /* Font Families — inherit JupyterLab's so the panel matches the rest of Lab */
+  --da-font-sans: var(--jp-ui-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
+  --da-font-mono: var(--jp-code-font-family, 'Monaco', 'Menlo', 'Consolas', monospace);
 
   /* Transitions */
   --da-transition-fast: 0.15s cubic-bezier(0.4, 0, 0.2, 1);
@@ -111,8 +112,7 @@
   align-items: center;
   padding: var(--da-space-4) var(--da-space-5);
   border-bottom: 1px solid var(--da-border-subtle);
-  background: linear-gradient(to bottom, var(--da-surface), var(--da-surface-elevated));
-  box-shadow: var(--da-shadow-sm);
+  background: var(--da-surface);
 }
 
 .deepagents-chat-title {
@@ -130,49 +130,23 @@
   align-items: center;
 }
 
-/* Status indicator pulse animation */
-@keyframes statusPulse {
-  0%, 100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.5;
-    transform: scale(1.3);
-  }
-}
-
 .deepagents-status-indicator {
   width: 8px;
   height: 8px;
   border-radius: var(--da-radius-full);
   display: inline-block;
-  box-shadow: 0 0 0 2px var(--da-surface);
-  position: relative;
 }
 
 .deepagents-status-healthy {
   background-color: var(--da-success);
-  box-shadow: 0 0 0 2px var(--da-surface), 0 0 8px var(--da-success);
-}
-
-.deepagents-status-healthy::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: var(--da-radius-full);
-  background: var(--da-success);
-  animation: statusPulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
 .deepagents-status-error {
   background-color: var(--da-error);
-  box-shadow: 0 0 0 2px var(--da-surface), 0 0 8px var(--da-error);
 }
 
 .deepagents-status-unknown {
   background-color: var(--da-warning);
-  box-shadow: 0 0 0 2px var(--da-surface);
 }
 
 .deepagents-icon-button {
@@ -195,13 +169,6 @@
 .deepagents-icon-button:hover:not(:disabled) {
   background: var(--da-surface-elevated);
   border-color: var(--da-foreground-subtle);
-  box-shadow: var(--da-shadow-sm);
-  transform: translateY(-1px);
-}
-
-.deepagents-icon-button:active:not(:disabled) {
-  transform: translateY(0);
-  box-shadow: var(--da-shadow-xs);
 }
 
 .deepagents-icon-button:disabled {
@@ -600,8 +567,7 @@
 
 .deepagents-tool-call:hover {
   border-left-color: var(--da-primary-hover);
-  box-shadow: var(--da-shadow-md);
-  transform: translateX(2px);
+  background: var(--da-surface-elevated);
 }
 
 .deepagents-tool-call-summary {
@@ -636,9 +602,9 @@
   padding: 10px 12px;
   background: var(--da-surface-elevated);
   border-top: 1px solid var(--da-border);
-  border-radius: 0 0 6px 6px;
-  font-size: 10px;
-  font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+  border-radius: 0 0 var(--da-radius-md) var(--da-radius-md);
+  font-size: var(--da-text-sm);
+  font-family: var(--da-font-mono);
   line-height: 1.4;
   overflow-x: auto;
   /* white-space: pre-wrap; */
@@ -651,9 +617,9 @@
   padding: 10px 12px;
   background: var(--da-surface-elevated);
   border: 1px solid var(--da-border);
-  border-radius: 4px;
-  font-size: 10px;
-  font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+  border-radius: var(--da-radius-md);
+  font-size: var(--da-text-sm);
+  font-family: var(--da-font-mono);
   line-height: 1.4;
   overflow-x: auto;
   /* white-space: pre-wrap; */
@@ -762,8 +728,7 @@
   gap: var(--da-space-3);
   padding: var(--da-space-4) var(--da-space-5);
   border-top: 1px solid var(--da-border);
-  background: linear-gradient(to top, var(--da-surface-elevated), var(--da-surface));
-  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.04);
+  background: var(--da-surface);
   align-items: flex-end;
 }
 
@@ -787,7 +752,6 @@
 
 .deepagents-chat-input:focus {
   border-color: var(--da-primary);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1), var(--da-shadow-md);
 }
 
 .deepagents-chat-input::placeholder {
@@ -804,67 +768,51 @@
   width: 40px;
   height: 40px;
   padding: 0;
-  background: linear-gradient(135deg, var(--da-primary) 0%, var(--da-primary-hover) 100%);
-  color: white;
+  background: var(--da-primary);
+  color: var(--jp-ui-inverse-font-color1, #ffffff);
   border: none;
-  border-radius: var(--da-radius-full);
+  border-radius: var(--da-radius-md);
   font-weight: var(--da-weight-bold);
   cursor: pointer;
-  transition: all var(--da-transition-fast);
+  transition: background var(--da-transition-fast);
   font-family: var(--da-font-sans);
   font-size: 18px;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: var(--da-shadow-primary);
 }
 
 .deepagents-send-button:hover:not(:disabled) {
-  background: linear-gradient(135deg, var(--da-primary-hover) 0%, var(--da-primary-active) 100%);
-  transform: translateY(-2px) scale(1.05);
-  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.4);
-}
-
-.deepagents-send-button:active:not(:disabled) {
-  transform: translateY(0) scale(0.98);
-  box-shadow: var(--da-shadow-primary);
+  background: var(--da-primary-hover);
 }
 
 .deepagents-send-button:disabled {
   opacity: 0.4;
   cursor: not-allowed;
   background: var(--da-foreground-subtle);
-  box-shadow: none;
 }
 
 .deepagents-stop-button {
   width: 40px;
   height: 40px;
   padding: 0;
-  background: linear-gradient(135deg, var(--da-error) 0%, #b91c1c 100%);
-  color: white;
+  background: var(--da-error);
+  color: var(--jp-ui-inverse-font-color1, #ffffff);
   border: none;
-  border-radius: var(--da-radius-full);
+  border-radius: var(--da-radius-md);
   font-weight: var(--da-weight-bold);
   cursor: pointer;
-  transition: all var(--da-transition-fast);
+  transition: background var(--da-transition-fast);
   font-family: var(--da-font-sans);
   font-size: 16px;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 2px 8px rgba(220, 38, 38, 0.3);
 }
 
 .deepagents-stop-button:hover {
-  background: linear-gradient(135deg, #b91c1c 0%, #991b1b 100%);
-  transform: translateY(-2px) scale(1.05);
-  box-shadow: 0 4px 12px rgba(220, 38, 38, 0.4);
-}
-
-.deepagents-stop-button:active {
-  transform: translateY(0) scale(0.98);
-  box-shadow: 0 2px 6px rgba(220, 38, 38, 0.3);
+  background: var(--da-error);
+  filter: brightness(0.92);
 }
 
 /* Scrollbar styling - Refined */
@@ -878,36 +826,36 @@
 
 .deepagents-chat-messages::-webkit-scrollbar-thumb {
   background: var(--da-border-strong);
-  border-radius: 3px;
+  border-radius: var(--da-radius-sm);
 }
 
 .deepagents-chat-messages::-webkit-scrollbar-thumb:hover {
   background: var(--da-foreground-subtle);
 }
 
-/* Interrupt UI - Professional styling */
+/* Interrupt / approval UI — themed off JupyterLab's warn palette */
 .deepagents-interrupt {
   margin: 16px 0;
   padding: 16px 18px;
-  background: linear-gradient(to right, #fef3c7, #fef08a);
-  border: 1px solid #fbbf24;
-  border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(251, 191, 36, 0.15);
+  background: var(--jp-warn-color3, #fef3c7);
+  border: 1px solid var(--jp-warn-color1, #fbbf24);
+  border-left: 3px solid var(--jp-warn-color1, #fbbf24);
+  border-radius: var(--da-radius-lg);
 }
 
 .deepagents-interrupt-header {
-  font-size: 13px;
-  font-weight: 600;
-  color: #78350f;
+  font-size: var(--da-text-md);
+  font-weight: var(--da-weight-semibold);
+  color: var(--da-foreground);
   margin-bottom: 10px;
   letter-spacing: 0.3px;
 }
 
 .deepagents-interrupt-description {
-  font-size: 12px;
+  font-size: var(--da-text-base);
   margin: 8px 0 14px 0;
-  color: #92400e;
-  line-height: 1.5;
+  color: var(--da-foreground-muted);
+  line-height: var(--da-leading-normal);
 }
 
 .deepagents-action-decisions {
@@ -918,15 +866,14 @@
 
 .deepagents-decision-btn {
   padding: 8px 18px;
-  border: 1px solid #d97706;
-  border-radius: 6px;
-  font-size: 12px;
-  font-weight: 500;
+  border: 1px solid var(--da-border-strong);
+  border-radius: var(--da-radius-md);
+  font-size: var(--da-text-base);
+  font-weight: var(--da-weight-medium);
   cursor: pointer;
-  background: white;
-  color: #92400e;
-  transition: all 0.2s ease;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  background: var(--da-surface);
+  color: var(--da-foreground);
+  transition: border-color var(--da-transition-base), background var(--da-transition-base);
 }
 
 .deepagents-decision-btn:disabled {
@@ -935,31 +882,20 @@
 }
 
 .deepagents-decision-btn:hover:not(:disabled) {
-  background: #fffbeb;
-  border-color: #b45309;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
-  transform: translateY(-1px);
-}
-
-.deepagents-decision-btn:active:not(:disabled) {
-  transform: translateY(0);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  background: var(--da-surface-elevated);
 }
 
 .deepagents-approve-btn:hover:not(:disabled) {
-  background: #f0fdf4;
-  border-color: #16a34a;
-  color: #166534;
+  border-color: var(--da-success);
+  color: var(--da-success);
 }
 
 .deepagents-reject-btn:hover:not(:disabled) {
-  background: #fef2f2;
-  border-color: #dc2626;
-  color: #991b1b;
+  border-color: var(--da-error);
+  color: var(--da-error);
 }
 
 .deepagents-edit-btn:hover:not(:disabled) {
-  background: #eff6ff;
-  border-color: #2563eb;
-  color: #1e40af;
+  border-color: var(--da-primary);
+  color: var(--da-primary);
 }
