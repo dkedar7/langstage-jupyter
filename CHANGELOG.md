@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-06-04
+
+### Fixed
+- **Chat sidebar now honors JupyterLab's light/dark theme.** It previously hardcoded a light palette and stayed light in dark mode (a jarring light island). The `--da-*` design tokens now resolve from JupyterLab's `--jp-*` theme variables (with light fallbacks).
+
+### Changed
+- **Design-coherence pass on the sidebar** to feel native to JupyterLab: flattened the styling (removed gradients, drop-shadows, hover transforms, and the infinite status-dot pulse), unified the rounding scale (anchored on `--jp-border-radius`), aligned fonts to `--jp-ui-font-size*` / `--jp-ui-font-family` and raised the smallest size from 10px to 11px, and themed the approval/interrupt alert off `--jp-warn-*` instead of hardcoded amber.
+
+### Added
+- Visual-regression gate (Galata) for the chat sidebar in light + dark, guarding the styling against regressions. Dev-only — not part of the published package.
+
 ## [0.2.0] - 2026-06-02
 
 ### Changed
