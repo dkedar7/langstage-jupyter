@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-06-10
+
+### Added
+
+- **`deepagent-lab -a/--agent <spec>`** — pick the agent straight from the launcher (`-a x`, `--agent x`, `--agent=x`). The launcher extracts the flag before passing the remaining args to `jupyter lab` and exports `DEEPAGENT_AGENT_SPEC` for the sidebar extension.
+- **`deepagent-lab --demo`** — launch with the shared keyless echo agent (`langgraph_stream_parser.demo.stub:graph`): the whole extension runs with no API key.
+- README: *One agent, every surface* family table + launcher flag docs.
+
+### Changed
+
+- `langgraph-stream-parser` pinned `>=0.2.2,<0.3` (the release that ships the demo stub).
+
 ## [0.2.1] - 2026-06-04
 
 ### Fixed
