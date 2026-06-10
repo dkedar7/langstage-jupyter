@@ -4,7 +4,73 @@ Tests for launcher utilities (launcher.py).
 import socket
 import pytest
 from unittest.mock import Mock, patch, MagicMock
-from deepagent_lab.launcher import find_available_port, generate_token
+from deepagent_lab.launcher import (
+    DEMO_AGENT_SPEC,
+    extract_agent_args,
+    find_available_port,
+    generate_token,
+    main,
+)
+
+
+class TestExtractAgentArgs:
+    """Tests for the -a/--agent/--demo flag extraction."""
+
+    def test_no_agent_flags_pass_through(self):
+        spec, demo, rest = extract_agent_args(["--port", "9000", "--no-browser"])
+        assert spec is None
+        assert demo is False
+        assert rest == ["--port", "9000", "--no-browser"]
+
+    def test_short_flag(self):
+        spec, demo, rest = extract_agent_args(["-a", "my.py:graph", "--no-browser"])
+        assert spec == "my.py:graph"
+        assert rest == ["--no-browser"]
+
+    def test_long_flag_with_equals(self):
+        spec, _, rest = extract_agent_args(["--agent=pkg.mod:g"])
+        assert spec == "pkg.mod:g"
+        assert rest == []
+
+    def test_demo_flag(self):
+        spec, demo, rest = extract_agent_args(["--demo", "--port", "9000"])
+        assert spec is None
+        assert demo is True
+        assert rest == ["--port", "9000"]
+
+
+class TestMainAgentWiring:
+    """main() wires the agent flags into DEEPAGENT_AGENT_SPEC."""
+
+    def _run_main(self, argv, monkeypatch):
+        calls = {}
+
+        def fake_run(cmd, env=None):
+            calls["cmd"] = cmd
+            calls["env_spec"] = (env or {}).get("DEEPAGENT_AGENT_SPEC")
+
+        monkeypatch.setattr("deepagent_lab.launcher.subprocess.run", fake_run)
+        monkeypatch.setattr("sys.argv", ["deepagent-lab"] + argv)
+        monkeypatch.delenv("DEEPAGENT_AGENT_SPEC", raising=False)
+        main()
+        return calls
+
+    def test_demo_sets_stub_spec(self, monkeypatch):
+        calls = self._run_main(["--demo", "--no-browser"], monkeypatch)
+        assert calls["env_spec"] == DEMO_AGENT_SPEC
+        # the flag itself never reaches jupyter lab
+        assert "--demo" not in calls["cmd"]
+
+    def test_agent_flag_sets_spec(self, monkeypatch):
+        calls = self._run_main(["-a", "my.py:graph", "--no-browser"], monkeypatch)
+        assert calls["env_spec"] == "my.py:graph"
+        assert "-a" not in calls["cmd"]
+        assert "my.py:graph" not in calls["cmd"]
+
+    def test_demo_and_agent_conflict(self, monkeypatch):
+        monkeypatch.setattr("sys.argv", ["deepagent-lab", "--demo", "-a", "x.py:g"])
+        with pytest.raises(SystemExit):
+            main()
 
 
 class TestFindAvailablePort:

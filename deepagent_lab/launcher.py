@@ -6,17 +6,54 @@ This script wraps the 'jupyter lab' command to automatically configure
 the Jupyter server settings and make them available to agents.
 
 Usage:
-    deepagent-lab [jupyter lab args...]
+    deepagent-lab [options] [jupyter lab args...]
 
 Example:
     deepagent-lab --port 8889
     deepagent-lab --no-browser
+    deepagent-lab -a my_agent.py:graph     # pick the agent, same spec format
+                                           # as every deep-agent surface
+    deepagent-lab --demo                   # keyless demo agent, no API key
+    deepagent-lab --show-config            # print resolved config and exit
 """
 import os
 import sys
 import socket
 import secrets
 import subprocess
+
+# The keyless echo agent shipped with the shared core — see `--demo`.
+DEMO_AGENT_SPEC = "langgraph_stream_parser.demo.stub:graph"
+
+
+def extract_agent_args(args):
+    """Split our agent flags out of the passthrough jupyter-lab args.
+
+    Handles ``-a SPEC`` / ``--agent SPEC`` / ``--agent=SPEC`` and ``--demo``.
+    Returns ``(agent_spec, demo, remaining_args)`` — remaining_args go to
+    ``jupyter lab`` untouched.
+    """
+    agent_spec = None
+    demo = False
+    remaining = []
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in ("-a", "--agent") and i + 1 < len(args):
+            agent_spec = args[i + 1]
+            i += 2
+            continue
+        if arg.startswith("--agent="):
+            agent_spec = arg.split("=", 1)[1]
+            i += 1
+            continue
+        if arg == "--demo":
+            demo = True
+            i += 1
+            continue
+        remaining.append(arg)
+        i += 1
+    return agent_spec, demo, remaining
 
 
 def find_available_port(start_port=8888, max_attempts=10):
@@ -47,6 +84,19 @@ def main():
         from deepagent_lab.config import LabConfig
         print(LabConfig.resolve().describe())
         return
+
+    # Our agent flags must not reach `jupyter lab` (it would reject them).
+    agent_spec, demo, args = extract_agent_args(args)
+    if demo and agent_spec:
+        print("ERROR: --demo and -a/--agent are mutually exclusive")
+        sys.exit(1)
+    if demo:
+        agent_spec = DEMO_AGENT_SPEC
+    if agent_spec:
+        # The sidebar extension reads DEEPAGENT_AGENT_SPEC (env beats the
+        # built-in default; deepagents.toml still works when nothing is set).
+        os.environ["DEEPAGENT_AGENT_SPEC"] = agent_spec
+        print(f"Agent spec: {agent_spec}")
 
     # Check if user specified a port
     user_port = None

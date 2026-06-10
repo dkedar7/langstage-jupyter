@@ -21,6 +21,19 @@ A JupyterLab extension to allow **your** LangChain agents access to JuputerLab n
 
 Watch the full demo video here: [https://www.youtube.com/watch?v=vGA2vzMSQzo](https://www.youtube.com/watch?v=vGA2vzMSQzo)
 
+## One agent, every surface
+
+deepagent-lab is the JupyterLab surface of the **deep-agent family**: write your agent once — any LangGraph `CompiledGraph` — and run it on every surface with the same spec string (`module:attr` or `path/to/file.py:attr`), the same `deepagents.toml` config file, and the same `DEEPAGENT_*` environment variables.
+
+| Surface | Package | Try it |
+|---|---|---|
+| Web app | [cowork-dash](https://github.com/dkedar7/cowork-dash) | `cowork-dash run --agent my_agent.py:graph` |
+| JupyterLab | deepagent-lab | **you are here** |
+| Terminal | [deepagent-code](https://github.com/dkedar7/deepagent-code) | `deepagent-code -a my_agent.py:graph` |
+| VS Code | [deepagent-vscode](https://github.com/dkedar7/deepagent-vscode) | chat participant + stdio sidecar |
+| Reference agent | [deepagent-hermes](https://github.com/dkedar7/deepagent-hermes) | `DEEPAGENT_AGENT_SPEC=deepagent_hermes.agent:graph` on any surface |
+| Shared core | [langgraph-stream-parser](https://github.com/dkedar7/langgraph-stream-parser) | typed events + config resolver behind every surface |
+
 ## Features
 
 - **Chat Interface**: Sidebar for natural conversations with your agent
@@ -63,6 +76,17 @@ That's it! The launcher will:
 # All jupyter lab arguments are supported
 deepagent-lab --no-browser
 deepagent-lab --port 8889
+
+# Pick the agent right from the launcher (same spec format as every
+# deep-agent surface; sets DEEPAGENT_AGENT_SPEC for you)
+deepagent-lab -a my_agent.py:graph
+
+# No agent or API key yet? Launch with the keyless demo agent
+deepagent-lab --demo
+
+# Print the resolved configuration (each value, its source, and the
+# env var / deepagents.toml key that sets it) and exit
+deepagent-lab --show-config
 ```
 
 ### Alternative: Manual Configuration
