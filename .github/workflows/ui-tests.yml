@@ -41,7 +41,7 @@ jobs:
           # Editable install brings the runtime deps (langgraph, langchain-core,
           # langgraph-stream-parser, deepagents) — the stub agent needs no key.
           pip install -e ".[dev]"
-          jupyter server extension enable deepagent_lab
+          jupyter server extension enable langstage_jupyter
           jupyter labextension develop . --overwrite
           jupyter labextension list 2>&1 | grep -i deepagent
 
@@ -71,6 +71,6 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: deepagent-lab-playwright-report
+          name: langstage-jupyter-playwright-report
           path: ui-tests/playwright-report/
           retention-days: 7

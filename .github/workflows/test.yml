@@ -49,13 +49,13 @@ jobs:
 
     - name: Verify package can be imported
       run: |
-        python -c "import deepagent_lab; print('✓ deepagent_lab module found')"
-        python -c "import deepagent_lab.config; print('✓ config module found')"
-        python -c "import deepagent_lab.agent_wrapper; print('✓ agent_wrapper module found')"
+        python -c "import langstage_jupyter; print('✓ langstage_jupyter module found')"
+        python -c "import langstage_jupyter.config; print('✓ config module found')"
+        python -c "import langstage_jupyter.agent_wrapper; print('✓ agent_wrapper module found')"
 
     - name: Run tests
       run: |
-        pytest tests/ -v --tb=short --cov=deepagent_lab --cov-report=term-missing --cov-report=xml
+        pytest tests/ -v --tb=short --cov=langstage_jupyter --cov-report=term-missing --cov-report=xml
 
     - name: Upload coverage reports
       if: matrix.python-version == '3.11'

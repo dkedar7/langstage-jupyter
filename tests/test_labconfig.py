@@ -1,9 +1,9 @@
-"""Tests for LabConfig — deepagent-lab's HostConfig subclass (TOML-aware)."""
+"""Tests for LabConfig — langstage-jupyter's HostConfig subclass (TOML-aware)."""
 from pathlib import Path
 
 import pytest
 
-from deepagent_lab.config import LabConfig
+from langstage_jupyter.config import LabConfig
 
 
 @pytest.fixture
@@ -27,7 +27,7 @@ def test_defaults(isolated, tmp_path):
     assert cfg.jupyter_token == "12345"
     assert cfg.jupyter_server_url == "http://localhost:8889"
     assert cfg.virtual_mode is True
-    assert cfg.agent_module == "deepagent_lab.agent"
+    assert cfg.agent_module == "langstage_jupyter.agent"
     assert cfg.agent_variable is None
     assert cfg.execute_timeout == 300.0
 

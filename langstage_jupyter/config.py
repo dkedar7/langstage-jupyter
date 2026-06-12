@@ -1,4 +1,4 @@
-"""Configuration management for deepagent-lab.
+"""Configuration management for langstage-jupyter.
 
 Shares the ``DEEPAGENT_*`` schema + TOML loader with the deep-agent family via
 ``langgraph_stream_parser.host``. ``LabConfig`` is the full resolved config
@@ -34,14 +34,14 @@ def _to_bool(value: str) -> bool:
 
 @dataclass
 class LabConfig(HostConfig):
-    """deepagent-lab's view of the shared config.
+    """langstage-jupyter's view of the shared config.
 
     Adds the Jupyter / model / agent-loading keys on top of ``HostConfig``,
     resolved through the same ``defaults < deepagents.toml < DEEPAGENT_* env <
     overrides`` chain. (``DEEPAGENT_AGENT_SPEC`` is already canonical here.)
     """
 
-    agent_module: str = "deepagent_lab.agent"
+    agent_module: str = "langstage_jupyter.agent"
     agent_variable: Optional[str] = None
     jupyter_token: str = "12345"
     jupyter_server_url: str = "http://localhost:8889"

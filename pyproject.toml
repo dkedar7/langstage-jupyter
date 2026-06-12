@@ -3,7 +3,7 @@ requires = ["hatchling>=1.5.0", "jupyterlab>=4.0.0,<5", "hatch-nodejs-version"]
 build-backend = "hatchling.build"
 
 [project]
-name = "deepagent-lab"
+name = "langstage-jupyter"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11"
@@ -24,14 +24,16 @@ classifiers = [
 dependencies = [
     "jupyter_server>=2.0.1,<3",
     "langgraph>=0.0.1",
-    "langgraph-stream-parser>=0.2.2,<0.3",
+    "langgraph-stream-parser>=0.3,<0.4",
     "python-dotenv>=0.19.0",
     "deepagents>=0.1.0",
 ]
 dynamic = ["version", "description", "authors", "urls", "keywords"]
 
 [project.scripts]
-deepagent-lab = "deepagent_lab.launcher:main"
+langstage-jupyter = "langstage_jupyter.launcher:main"
+# Deprecated alias command — kept for one transition window.
+deepagent-lab = "langstage_jupyter.launcher:main"
 
 [project.optional-dependencies]
 dev = [
@@ -47,26 +49,29 @@ source = "nodejs"
 [tool.hatch.metadata.hooks.nodejs]
 fields = ["description", "authors", "urls"]
 
+[tool.hatch.build.targets.wheel]
+packages = ["langstage_jupyter", "deepagent_lab"]
+
 [tool.hatch.build.targets.sdist]
-artifacts = ["deepagent_lab/labextension"]
+artifacts = ["langstage_jupyter/labextension"]
 exclude = [".github", "binder"]
 
 [tool.hatch.build.targets.wheel.shared-data]
-"deepagent_lab/labextension" = "share/jupyter/labextensions/deepagent-lab"
-"install.json" = "share/jupyter/labextensions/deepagent-lab/install.json"
+"langstage_jupyter/labextension" = "share/jupyter/labextensions/langstage-jupyter"
+"install.json" = "share/jupyter/labextensions/langstage-jupyter/install.json"
 "jupyter-config/server-config" = "etc/jupyter/jupyter_server_config.d"
 
 [tool.hatch.build.hooks.version]
-path = "deepagent_lab/_version.py"
+path = "langstage_jupyter/_version.py"
 
 [tool.hatch.build.hooks.jupyter-builder]
 dependencies = ["hatch-jupyter-builder>=0.5"]
 build-function = "hatch_jupyter_builder.npm_builder"
 ensured-targets = [
-    "deepagent_lab/labextension/static/style.js",
-    "deepagent_lab/labextension/package.json",
+    "langstage_jupyter/labextension/static/style.js",
+    "langstage_jupyter/labextension/package.json",
 ]
-skip-if-exists = ["deepagent_lab/labextension/static/style.js"]
+skip-if-exists = ["langstage_jupyter/labextension/static/style.js"]
 
 [tool.hatch.build.hooks.jupyter-builder.build-kwargs]
 build_cmd = "build:prod"

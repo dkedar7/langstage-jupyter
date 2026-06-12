@@ -8,8 +8,8 @@
 
 ---
 
-* **Source code**: [github.com/dkedar7/deepagent-lab](https://github.com/dkedar7/deepagent-lab/)
-* **Installation**: `pip install -U deepagent-lab`
+* **Source code**: [github.com/dkedar7/langstage-jupyter](https://github.com/dkedar7/langstage-jupyter/)
+* **Installation**: `pip install -U langstage-jupyter`  *(renamed from `deepagent-lab` — the old name now just installs this one, and the `deepagent-lab` command still works)*
 
 ---
 
@@ -21,18 +21,18 @@ A JupyterLab extension to allow **your** LangChain agents access to JuputerLab n
 
 Watch the full demo video here: [https://www.youtube.com/watch?v=vGA2vzMSQzo](https://www.youtube.com/watch?v=vGA2vzMSQzo)
 
-## One agent, every surface
+## Every stage for your LangGraph agent
 
-deepagent-lab is the JupyterLab surface of the **deep-agent family**: write your agent once — any LangGraph `CompiledGraph` — and run it on every surface with the same spec string (`module:attr` or `path/to/file.py:attr`), the same `deepagents.toml` config file, and the same `DEEPAGENT_*` environment variables.
+langstage-jupyter is the JupyterLab stage of the **LangStage family**: write your agent once — any LangGraph `CompiledGraph` — and run it on every stage with the same spec string (`module:attr` or `path/to/file.py:attr`), the same `langstage.toml` config file, and the same `LANGSTAGE_*` environment variables.
 
-| Surface | Package | Try it |
+| Stage | Package | Try it |
 |---|---|---|
-| Web app | [cowork-dash](https://github.com/dkedar7/cowork-dash) | `cowork-dash run --agent my_agent.py:graph` |
-| JupyterLab | deepagent-lab | **you are here** |
-| Terminal | [deepagent-code](https://github.com/dkedar7/deepagent-code) | `deepagent-code -a my_agent.py:graph` |
-| VS Code | [deepagent-vscode](https://github.com/dkedar7/deepagent-vscode) | chat participant + stdio sidecar |
-| Reference agent | [deepagent-hermes](https://github.com/dkedar7/deepagent-hermes) | `DEEPAGENT_AGENT_SPEC=deepagent_hermes.agent:graph` on any surface |
-| Shared core | [langgraph-stream-parser](https://github.com/dkedar7/langgraph-stream-parser) | typed events + config resolver behind every surface |
+| Web app | [langstage](https://github.com/dkedar7/langstage) | `langstage run --agent my_agent.py:graph` |
+| JupyterLab | langstage-jupyter | **you are here** |
+| Terminal | [langstage-cli](https://github.com/dkedar7/langstage-cli) | `langstage-cli -a my_agent.py:graph` |
+| VS Code | [langstage-vscode](https://github.com/dkedar7/langstage-vscode) | chat participant + stdio sidecar |
+| Reference agent | [langstage-hermes](https://github.com/dkedar7/langstage-hermes) | `LANGSTAGE_AGENT_SPEC=langstage_hermes.agent:graph` on any stage |
+| Shared core | [langgraph-stream-parser](https://github.com/dkedar7/langgraph-stream-parser) | typed events + config resolver behind every stage |
 
 ## Features
 
@@ -46,23 +46,23 @@ deepagent-lab is the JupyterLab surface of the **deep-agent family**: write your
 ## Installation
 
 ```bash
-pip install deepagent-lab
+pip install langstage-jupyter
 ```
 
 ## Quick Start
 
 ### Recommended: Using the Launcher (Zero Configuration)
 
-Instead of `jupyter lab`, use `deepagent-lab` command for automatic setup.
+Instead of `jupyter lab`, use `langstage-jupyter` command for automatic setup.
 
-The easiest way to get started is using the `deepagent-lab` launcher command, which automatically configures everything for you:
+The easiest way to get started is using the `langstage-jupyter` launcher command, which automatically configures everything for you:
 
 ```bash
 # Set your API key (if using the default agent)
 export ANTHROPIC_API_KEY=your-api-key-here
 
 # Start JupyterLab with auto-configuration
-deepagent-lab
+langstage-jupyter
 ```
 
 That's it! The launcher will:
@@ -74,19 +74,19 @@ That's it! The launcher will:
 **Using custom arguments:**
 ```bash
 # All jupyter lab arguments are supported
-deepagent-lab --no-browser
-deepagent-lab --port 8889
+langstage-jupyter --no-browser
+langstage-jupyter --port 8889
 
 # Pick the agent right from the launcher (same spec format as every
-# deep-agent surface; sets DEEPAGENT_AGENT_SPEC for you)
-deepagent-lab -a my_agent.py:graph
+# LangStage stage; sets LANGSTAGE_AGENT_SPEC for you)
+langstage-jupyter -a my_agent.py:graph
 
 # No agent or API key yet? Launch with the keyless demo agent
-deepagent-lab --demo
+langstage-jupyter --demo
 
 # Print the resolved configuration (each value, its source, and the
-# env var / deepagents.toml key that sets it) and exit
-deepagent-lab --show-config
+# env var / langstage.toml key that sets it) and exit
+langstage-jupyter --show-config
 ```
 
 ### Alternative: Manual Configuration
@@ -97,8 +97,8 @@ If you prefer manual control or need to use `jupyter lab` directly, you can set 
 
 ```bash
 # Required: Jupyter server configuration
-export DEEPAGENT_JUPYTER_SERVER_URL=http://localhost:8888
-export DEEPAGENT_JUPYTER_TOKEN=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+export LANGSTAGE_JUPYTER_SERVER_URL=http://localhost:8888
+export LANGSTAGE_JUPYTER_TOKEN=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
 
 # If using the default agent, set your API key
 export ANTHROPIC_API_KEY=your-api-key-here
@@ -107,14 +107,14 @@ export ANTHROPIC_API_KEY=your-api-key-here
 2. **Start JupyterLab** with matching configuration:
 
 ```bash
-jupyter lab --port 8888 --IdentityProvider.token=$DEEPAGENT_JUPYTER_TOKEN
+jupyter lab --port 8888 --IdentityProvider.token=$LANGSTAGE_JUPYTER_TOKEN
 ```
 
 **Important:** The server URL and token must match between your environment variables and JupyterLab's startup parameters.
 
 ## Using Custom Agents
 
-Deepagent-lab is designed to work with any langgraph-compatible agent. You can easily use your own langgraph-compatible agents instead of the default agent.
+langstage-jupyter is designed to work with any langgraph-compatible agent. You can easily use your own langgraph-compatible agents instead of the default agent.
 
 ### Creating a Custom Agent
 
@@ -127,7 +127,7 @@ from langgraph.checkpoint.memory import MemorySaver
 import os
 
 # The agent automatically discovers the workspace
-workspace = os.getenv('DEEPAGENT_WORKSPACE_ROOT', '.')
+workspace = os.getenv('LANGSTAGE_WORKSPACE_ROOT', '.')
 
 # Create your custom agent
 agent = create_deep_agent(
@@ -141,56 +141,55 @@ agent = create_deep_agent(
 
 ### Configuring the Extension to Use Your Agent
 
-Set the `DEEPAGENT_AGENT_SPEC` environment variable to point to your agent:
+Set the `LANGSTAGE_AGENT_SPEC` environment variable to point to your agent:
 
 ```bash
 # Format: path/to/file.py:variable_name
-export DEEPAGENT_AGENT_SPEC=./my_agent.py:agent
+export LANGSTAGE_AGENT_SPEC=./my_agent.py:agent
 ```
 
 Then launch as normal:
 
 ```bash
 # With the launcher (recommended)
-deepagent-lab
+langstage-jupyter
 
 # Or manually
-jupyter lab --port 8888 --IdentityProvider.token=$DEEPAGENT_JUPYTER_TOKEN
+jupyter lab --port 8888 --IdentityProvider.token=$LANGSTAGE_JUPYTER_TOKEN
 ```
 
 The chat interface will automatically display your custom agent's name (if you set the `name` attribute).
 
 ### Agent Portability
 
-Agents configured for deepagent-lab work seamlessly with [deepagent-dash](https://github.com/dkedar7/deepagent-dash):
+Agents configured for langstage-jupyter work seamlessly with every other LangStage stage:
 
 ```bash
-# Same configuration works for both tools!
-export DEEPAGENT_AGENT_SPEC=./my_agent.py:agent
-export DEEPAGENT_WORKSPACE_ROOT=/path/to/project
+# Same configuration works everywhere!
+export LANGSTAGE_AGENT_SPEC=./my_agent.py:agent
+export LANGSTAGE_WORKSPACE_ROOT=/path/to/project
 
 # Run in JupyterLab
-deepagent-lab
+langstage-jupyter
 
-# Or run in Dash
-deepagent-dash run
+# Or in the browser / terminal
+langstage run
+langstage-cli
 ```
-
-All environment variables use the `DEEPAGENT_` prefix for compatibility.
 
 ## Environment Variables
 
-All configuration uses the `DEEPAGENT_` prefix:
+All configuration uses the `LANGSTAGE_` prefix (the pre-rename `DEEPAGENT_` names still resolve as deprecated fallbacks):
 
 | Variable | Purpose | Default | When to Set |
 |----------|---------|---------|-------------|
-| `DEEPAGENT_AGENT_SPEC` | Custom agent location (`path:variable`) | Uses default agent | Optional: for custom agents |
-| `DEEPAGENT_WORKSPACE_ROOT` | Working directory for agent | JupyterLab root | Optional |
-| `DEEPAGENT_JUPYTER_SERVER_URL` | Jupyter server URL | Auto-detected | Manual config only |
-| `DEEPAGENT_JUPYTER_TOKEN` | Jupyter auth token | Auto-generated | Manual config only |
+| `LANGSTAGE_AGENT_SPEC` | Custom agent location (`path:variable`) | Uses default agent | Optional: for custom agents |
+| `LANGSTAGE_WORKSPACE_ROOT` | Working directory for agent | JupyterLab root | Optional |
+| `LANGSTAGE_JUPYTER_SERVER_URL` | Jupyter server URL | Auto-detected | Manual config only |
+| `LANGSTAGE_JUPYTER_TOKEN` | Jupyter auth token | Auto-generated | Manual config only |
 | `ANTHROPIC_API_KEY` | Anthropic API key | None | Required for default agent |
 
-When using the `deepagent-lab` launcher, `DEEPAGENT_JUPYTER_SERVER_URL` and `DEEPAGENT_JUPYTER_TOKEN` are automatically configured and don't need to be set.
+When using the `langstage-jupyter` launcher, `LANGSTAGE_JUPYTER_SERVER_URL` and `LANGSTAGE_JUPYTER_TOKEN` are automatically configured and don't need to be set.
 
 See [.env.example](.env.example) for a complete configuration template.
 

@@ -4,7 +4,7 @@ Tests for launcher utilities (launcher.py).
 import socket
 import pytest
 from unittest.mock import Mock, patch, MagicMock
-from deepagent_lab.launcher import (
+from langstage_jupyter.launcher import (
     DEMO_AGENT_SPEC,
     extract_agent_args,
     find_available_port,
@@ -47,10 +47,11 @@ class TestMainAgentWiring:
 
         def fake_run(cmd, env=None):
             calls["cmd"] = cmd
-            calls["env_spec"] = (env or {}).get("DEEPAGENT_AGENT_SPEC")
+            calls["env_spec"] = (env or {}).get("LANGSTAGE_AGENT_SPEC")
 
-        monkeypatch.setattr("deepagent_lab.launcher.subprocess.run", fake_run)
-        monkeypatch.setattr("sys.argv", ["deepagent-lab"] + argv)
+        monkeypatch.setattr("langstage_jupyter.launcher.subprocess.run", fake_run)
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter"] + argv)
+        monkeypatch.delenv("LANGSTAGE_AGENT_SPEC", raising=False)
         monkeypatch.delenv("DEEPAGENT_AGENT_SPEC", raising=False)
         main()
         return calls
@@ -68,7 +69,7 @@ class TestMainAgentWiring:
         assert "my.py:graph" not in calls["cmd"]
 
     def test_demo_and_agent_conflict(self, monkeypatch):
-        monkeypatch.setattr("sys.argv", ["deepagent-lab", "--demo", "-a", "x.py:g"])
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", "--demo", "-a", "x.py:g"])
         with pytest.raises(SystemExit):
             main()
 
