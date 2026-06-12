@@ -4,7 +4,7 @@ Tests for configuration management (config.py).
 import os
 import pytest
 from pathlib import Path
-from deepagent_lab.config import get_config
+from langstage_jupyter.config import get_config
 
 
 class TestGetConfig:
@@ -81,7 +81,7 @@ class TestConfigConstants:
         """Should be None when DEEPAGENT_WORKSPACE_ROOT is not set."""
         # Re-import after cleaning env to get fresh values
         import importlib
-        from deepagent_lab import config
+        from langstage_jupyter import config
         importlib.reload(config)
         assert config.WORKSPACE_ROOT is None
 
@@ -89,7 +89,7 @@ class TestConfigConstants:
         """Should resolve workspace root path when set."""
         mock_env("DEEPAGENT_WORKSPACE_ROOT", str(tmp_path))
         import importlib
-        from deepagent_lab import config
+        from langstage_jupyter import config
         importlib.reload(config)
         assert config.WORKSPACE_ROOT == tmp_path.resolve()
         assert isinstance(config.WORKSPACE_ROOT, Path)
@@ -97,10 +97,10 @@ class TestConfigConstants:
     def test_default_values(self, clean_env):
         """Should have expected default values."""
         import importlib
-        from deepagent_lab import config
+        from langstage_jupyter import config
         importlib.reload(config)
 
-        assert config.AGENT_MODULE == "deepagent_lab.agent"
+        assert config.AGENT_MODULE == "langstage_jupyter.agent"
         assert config.AGENT_VARIABLE is None
         assert config.AGENT_SPEC is None
         assert config.JUPYTER_TOKEN == "12345"
@@ -121,7 +121,7 @@ class TestConfigConstants:
         mock_env("DEEPAGENT_VIRTUAL_MODE", "false")
 
         import importlib
-        from deepagent_lab import config
+        from langstage_jupyter import config
         importlib.reload(config)
 
         assert config.AGENT_MODULE == "custom.agent"

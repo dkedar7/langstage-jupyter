@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-06-12
+
+**deepagent-lab is now `langstage-jupyter`** — the JupyterLab stage of the LangStage family ("every stage for your LangGraph agent").
+
+### Changed
+
+- Distribution `deepagent-lab` → **`langstage-jupyter`**; module `deepagent_lab` → **`langstage_jupyter`**; npm/labextension name `langstage-jupyter`. A deprecated alias package keeps `import deepagent_lab` working with a `DeprecationWarning`; the `deepagent-lab` launcher command remains as an alias of `langstage-jupyter`.
+- Canonical config vocabulary via langgraph-stream-parser 0.3: `LANGSTAGE_*` env vars (`LANGSTAGE_AGENT_SPEC`, `LANGSTAGE_JUPYTER_SERVER_URL`, `LANGSTAGE_JUPYTER_TOKEN`, ...), project `langstage.toml`, global `~/.langstage/config.toml`. The full legacy `DEEPAGENT_*` / `deepagents.toml` vocabulary still resolves; the launcher exports both spellings so mixed old/new installs keep working.
+- Parser pinned `>=0.3,<0.4`.
+
 ## [0.3.0] - 2026-06-10
 
 ### Added

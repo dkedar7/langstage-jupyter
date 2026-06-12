@@ -1,7 +1,7 @@
 {
-  "name": "deepagent-lab-ui-tests",
+  "name": "langstage-jupyter-ui-tests",
   "version": "0.1.0",
-  "description": "Galata UI tests for deepagent-lab (not published)",
+  "description": "Galata UI tests for langstage-jupyter (not published)",
   "private": true,
   "scripts": {
     "start": "jupyter lab --config jupyter_server_test_config.py",

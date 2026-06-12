@@ -1,6 +1,6 @@
 {
-  "name": "deepagent-lab",
-  "version": "0.3.0",
+  "name": "langstage-jupyter",
+  "version": "0.4.0",
   "description": "JupyterLab extension with chat interface for DeepAgents",
   "keywords": [
     "jupyter",
@@ -9,9 +9,9 @@
     "deepagents",
     "ai"
   ],
-  "homepage": "https://github.com/dkedar7/deepagent-lab",
+  "homepage": "https://github.com/dkedar7/langstage-jupyter",
   "bugs": {
-    "url": "https://github.com/dkedar7/deepagent-lab/issues"
+    "url": "https://github.com/dkedar7/langstage-jupyter/issues"
   },
   "license": "MIT",
   "author": "Kedar Dabhadkar",
@@ -25,7 +25,7 @@
   "style": "style/index.css",
   "repository": {
     "type": "git",
-    "url": "https://github.com/dkedar7/deepagent-lab.git"
+    "url": "https://github.com/dkedar7/langstage-jupyter.git"
   },
   "scripts": {
     "build": "yarn build:lib && yarn build:labextension:dev",
@@ -37,7 +37,7 @@
     "clean": "yarn clean:lib",
     "clean:lib": "rimraf lib tsconfig.tsbuildinfo",
     "clean:lintcache": "rimraf .eslintcache .stylelintcache",
-    "clean:labextension": "rimraf deepagent_lab/labextension deepagent_lab/*.tgz",
+    "clean:labextension": "rimraf langstage_jupyter/labextension langstage_jupyter/*.tgz",
     "clean:all": "yarn clean:lib && yarn clean:labextension && yarn clean:lintcache",
     "install:extension": "yarn build",
     "watch": "run-p watch:src watch:labextension",
@@ -78,7 +78,7 @@
   },
   "jupyterlab": {
     "extension": true,
-    "outputDir": "deepagent_lab/labextension",
+    "outputDir": "langstage_jupyter/labextension",
     "schemaDir": "schema"
   },
   "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"

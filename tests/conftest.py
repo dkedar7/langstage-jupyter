@@ -1,5 +1,5 @@
 """
-Pytest configuration and shared fixtures for deepagent-lab tests.
+Pytest configuration and shared fixtures for langstage-jupyter tests.
 """
 import os
 import pytest

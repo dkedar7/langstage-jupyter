@@ -1,5 +1,5 @@
 /**
- * Galata/Playwright config for deepagent-lab UI tests.
+ * Galata/Playwright config for langstage-jupyter UI tests.
  *
  * Inherits Galata's base config and starts a JupyterLab server (via the
  * `start` script) wired to the model-free stub agent. DEEPAGENT_AGENT_SPEC is

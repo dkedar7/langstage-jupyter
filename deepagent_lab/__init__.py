@@ -1,26 +1,25 @@
+"""Deprecated alias package: ``deepagent_lab`` is now ``langstage_jupyter``.
+
+Kept for one transition window so existing imports keep working. Import
+``langstage_jupyter`` instead. (The Jupyter server extension registers under
+``langstage_jupyter`` only — this alias is import-compat, not a second
+extension registration.)
 """
-JupyterLab DeepAgents Extension
-"""
-from ._version import __version__
-from .handlers import setup_handlers
+import sys as _sys
+import warnings as _warnings
 
+import langstage_jupyter as _new
+from langstage_jupyter import *  # noqa: F401,F403
+from langstage_jupyter import agent_wrapper, config, launcher  # noqa: F401
 
-def _jupyter_labextension_paths():
-    """Called by JupyterLab to get extension paths."""
-    return [{
-        "src": "labextension",
-        "dest": "deepagent-lab"
-    }]
+_warnings.warn(
+    "deepagent_lab has been renamed to langstage_jupyter; "
+    "this alias package will be removed in a future release.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
-
-def _jupyter_server_extension_points():
-    """Called by Jupyter Server to get server extension points."""
-    return [{
-        "module": "deepagent_lab"
-    }]
-
-
-def _load_jupyter_server_extension(server_app):
-    """Called by Jupyter Server to load the extension."""
-    setup_handlers(server_app.web_app)
-    server_app.log.info("Loaded deepagent-lab extension")
+_sys.modules[__name__ + ".agent_wrapper"] = agent_wrapper
+_sys.modules[__name__ + ".config"] = config
+_sys.modules[__name__ + ".launcher"] = launcher
+__version__ = getattr(_new, "__version__", "0")

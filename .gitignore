@@ -215,7 +215,7 @@ tsconfig.tsbuildinfo
 
 # JupyterLab extension build outputs (already handled by Python packaging)
 *.bundled.js
-deepagent_lab/labextension
+langstage_jupyter/labextension
 .yarn/
 release.sh
 

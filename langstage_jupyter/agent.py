@@ -1,5 +1,5 @@
 """
-Default agent configuration for deepagent-lab.
+Default agent configuration for langstage-jupyter.
 
 This agent is used when no custom agent is specified. It provides basic
 notebook manipulation capabilities with filesystem access.
@@ -17,7 +17,7 @@ from langgraph_stream_parser.demo import create_default_agent as _build_default_
 from langchain.chat_models import init_chat_model
 
 # Import configuration
-from deepagent_lab import config
+from langstage_jupyter import config
 
 # Import notebook tools
 from jupyter_client import BlockingKernelClient, find_connection_file
@@ -449,7 +449,7 @@ def execute_cell(
 
     if timed_out:
         output_texts.append(
-            f"[deepagent-lab] Cell exceeded EXECUTE_TIMEOUT={EXECUTE_TIMEOUT}s; "
+            f"[langstage-jupyter] Cell exceeded EXECUTE_TIMEOUT={EXECUTE_TIMEOUT}s; "
             "output above may be incomplete. Set DEEPAGENT_EXECUTE_TIMEOUT to raise the budget."
         )
     

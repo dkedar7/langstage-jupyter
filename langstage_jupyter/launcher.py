@@ -6,15 +6,15 @@ This script wraps the 'jupyter lab' command to automatically configure
 the Jupyter server settings and make them available to agents.
 
 Usage:
-    deepagent-lab [options] [jupyter lab args...]
+    langstage-jupyter [options] [jupyter lab args...]
 
 Example:
-    deepagent-lab --port 8889
-    deepagent-lab --no-browser
-    deepagent-lab -a my_agent.py:graph     # pick the agent, same spec format
+    langstage-jupyter --port 8889
+    langstage-jupyter --no-browser
+    langstage-jupyter -a my_agent.py:graph     # pick the agent, same spec format
                                            # as every deep-agent surface
-    deepagent-lab --demo                   # keyless demo agent, no API key
-    deepagent-lab --show-config            # print resolved config and exit
+    langstage-jupyter --demo                   # keyless demo agent, no API key
+    langstage-jupyter --show-config            # print resolved config and exit
 """
 import os
 import sys
@@ -81,7 +81,7 @@ def main():
     # --show-config: print the resolved config (value, source, env var / TOML
     # key for each) and exit — no need to remember the DEEPAGENT_* names.
     if "--show-config" in args:
-        from deepagent_lab.config import LabConfig
+        from langstage_jupyter.config import LabConfig
         print(LabConfig.resolve().describe())
         return
 
@@ -93,8 +93,11 @@ def main():
     if demo:
         agent_spec = DEMO_AGENT_SPEC
     if agent_spec:
-        # The sidebar extension reads DEEPAGENT_AGENT_SPEC (env beats the
-        # built-in default; deepagents.toml still works when nothing is set).
+        # The sidebar extension resolves LANGSTAGE_AGENT_SPEC (env beats the
+        # built-in default; langstage.toml still works when nothing is set).
+        # The legacy name is set too so an older installed extension version
+        # keeps working with this launcher.
+        os.environ["LANGSTAGE_AGENT_SPEC"] = agent_spec
         os.environ["DEEPAGENT_AGENT_SPEC"] = agent_spec
         print(f"Agent spec: {agent_spec}")
 
@@ -137,17 +140,20 @@ def main():
     # Use localhost for security (only local connections)
     server_url = f"http://localhost:{port}"
 
-    # Set environment variables for the agent to use
+    # Set environment variables for the agent to use (canonical + legacy
+    # names so an older installed extension version keeps working).
+    os.environ['LANGSTAGE_JUPYTER_SERVER_URL'] = server_url
+    os.environ['LANGSTAGE_JUPYTER_TOKEN'] = token
     os.environ['DEEPAGENT_JUPYTER_SERVER_URL'] = server_url
     os.environ['DEEPAGENT_JUPYTER_TOKEN'] = token
 
     print(f"\n{'='*60}")
-    print(f"DeepAgent Lab Configuration:")
+    print(f"LangStage Jupyter Configuration:")
     print(f"  Server URL: {server_url}")
     print(f"  Token: {'*' * 20} (hidden for security)")
     print(f"  Environment variables set:")
-    print(f"    - DEEPAGENT_JUPYTER_SERVER_URL")
-    print(f"    - DEEPAGENT_JUPYTER_TOKEN")
+    print(f"    - LANGSTAGE_JUPYTER_SERVER_URL")
+    print(f"    - LANGSTAGE_JUPYTER_TOKEN")
     print(f"{'='*60}\n")
 
     # Build jupyter lab command
