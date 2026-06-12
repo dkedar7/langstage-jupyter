@@ -43,7 +43,7 @@ jobs:
           pip install -e ".[dev]"
           jupyter server extension enable langstage_jupyter
           jupyter labextension develop . --overwrite
-          jupyter labextension list 2>&1 | grep -i deepagent
+          jupyter labextension list 2>&1 | grep -i langstage
 
       - name: Install UI-test deps
         working-directory: ui-tests
