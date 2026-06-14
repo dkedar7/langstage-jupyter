@@ -24,7 +24,7 @@ classifiers = [
 dependencies = [
     "jupyter_server>=2.0.1,<3",
     "langgraph>=0.0.1",
-    "langgraph-stream-parser>=0.3,<0.4",
+    "langgraph-stream-parser>=0.3,<0.5",
     "python-dotenv>=0.19.0",
     "deepagents>=0.1.0",
 ]
@@ -42,6 +42,7 @@ dev = [
     "pytest-cov>=4.0.0",
     "pytest-asyncio>=0.21.0",
 ]
+agui = ["langgraph-stream-parser[agui]>=0.4,<0.5"]
 
 [tool.hatch.version]
 source = "nodejs"

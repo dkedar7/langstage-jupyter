@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-06-14
+
+### Added
+
+- Adopt AG-UI: widen the langgraph-stream-parser ceiling to `<0.5` and add an `[agui]` extra so this surface's agent can be served over AG-UI via `langstage-agui`. Additive; no runtime changes.
+
 ## [0.4.0] - 2026-06-12
 
 **deepagent-lab is now `langstage-jupyter`** — the JupyterLab stage of the LangStage family ("every stage for your LangGraph agent").
