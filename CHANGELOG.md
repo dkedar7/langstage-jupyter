@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.1 - 2026-06-16
+
+### Fixed
+- Declare previously-undeclared runtime dependencies that `langstage_jupyter/agent.py`
+  imports at module top level — `langchain`, `requests`, `nbformat`, `jupyter_client`,
+  `tornado`. They were only present transitively (langchain via deepagents, etc.), so a
+  fresh `pip install langstage-jupyter` could `ModuleNotFoundError` on those paths. Found
+  by rolling the family's minimal-install CI guard.
+
+### CI
+- Added a `minimal-install` job (install with no extras + deep import smoke incl. agent.py).
+
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),

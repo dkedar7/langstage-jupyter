@@ -65,3 +65,23 @@ jobs:
         files: ./coverage.xml
       env:
         CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  # Guard against undeclared runtime dependencies: install the Python package
+  # with NO extras (declared deps only, like a real `pip install langstage-jupyter`)
+  # and smoke-import every module. A top-level import that is only available
+  # transitively will fail here.
+  minimal-install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install with NO extras (declared deps only)
+        run: |
+          python -m pip install --upgrade pip
+          pip install .
+      - name: Import smoke on a minimal install
+        run: |
+          python -c "import langstage_jupyter; print('ok')"
+          python -c "import langstage_jupyter.config, langstage_jupyter.agent_wrapper, langstage_jupyter.handlers, langstage_jupyter.agent, langstage_jupyter.launcher; print('ok')"
