@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.2 - 2026-06-16
+
+### Changed
+- Modernized the `langgraph-stream-parser` pin `>=0.3,<0.5` -> `>=0.6,<0.7` (and the
+  `[agui]` extra) — it was several majors behind the rest of the family. CI now installs
+  the package from pyproject for that dependency instead of a hardcoded stale range.
+
+
 ## 0.5.1 - 2026-06-16
 
 ### Fixed
