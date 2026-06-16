@@ -27,6 +27,15 @@ dependencies = [
     "langgraph-stream-parser>=0.3,<0.5",
     "python-dotenv>=0.19.0",
     "deepagents>=0.1.0",
+    # Direct top-level imports in langstage_jupyter/agent.py. Previously only
+    # available transitively (langchain via deepagents; requests via langsmith;
+    # nbformat/jupyter_client/tornado via jupyter_server) — declared explicitly
+    # so a minimal `pip install` cannot break on a transitive drop.
+    "langchain>=1.0",
+    "nbformat>=5.0",
+    "requests>=2.25",
+    "jupyter_client>=7.0",
+    "tornado>=6.1",
 ]
 dynamic = ["version", "description", "authors", "urls", "keywords"]
 
