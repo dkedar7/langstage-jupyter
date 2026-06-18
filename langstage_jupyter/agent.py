@@ -520,7 +520,7 @@ chat_model = init_chat_model(MODEL_NAME, temperature=MODEL_TEMPERATURE)
 agent = _build_default_agent(
     workspace=str(WORKSPACE),
     model=chat_model,
-    name="Default Agent",
+    name="default-agent",
     system_prompt=system_prompt,
     tools=[get_notebook_state, create_notebook, insert_code_cell, modify_cell, execute_cell],
     virtual_mode=config.VIRTUAL_MODE,

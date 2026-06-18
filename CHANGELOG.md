@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.5.3 - 2026-06-18
+
+### Fixed
+- **First-run launcher failure on a clean install (gh #24).** `jupyterlab` was pinned
+  only in `[build-system].requires`, so `pip install langstage-jupyter` left the user
+  without a Lab UI and the headline `langstage-jupyter` launcher died on
+  `Jupyter command 'jupyter-lab' not found`. Declared `jupyterlab>=4.0.0,<5` as a runtime
+  dependency. The launcher's old `except FileNotFoundError` guard never fired (the
+  `jupyter` dispatcher *is* present), so it now pre-checks
+  `importlib.util.find_spec("jupyterlab")` and prints an actionable `pip install jupyterlab`
+  hint before launching.
+- **Default agent name 400'd OpenAI-compatible providers (gh #23).** The shipped default
+  `name="Default Agent"` flows into the LLM message `name` field, which OpenAI-compatible
+  providers (e.g. via OpenRouter) require to match `^[^\s<|\\/>]+$` — no spaces — so the
+  default agent hard-`400`'d on the second turn. Renamed the default to `default-agent`
+  and bumped the core pin to `langgraph-stream-parser>=0.6.3`, which slugifies any unsafe
+  display name as an upstream backstop for custom agents.
+
+### CI
+- The `test` job now installs `jupyterlab` (declared runtime dep) and pins
+  `langgraph-stream-parser>=0.6.3` to match pyproject.
+
+
 ## 0.5.2 - 2026-06-16
 
 ### Changed

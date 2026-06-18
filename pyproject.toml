@@ -22,9 +22,17 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
+    # The package IS a prebuilt JupyterLab extension and the headline launcher
+    # runs `jupyter lab`, so JupyterLab is a hard runtime requirement — not just
+    # a build dep. It was pinned only in [build-system].requires, so a clean
+    # `pip install langstage-jupyter` left the user with no Lab UI and the
+    # launcher dying on `jupyter-lab not found` (gh #24).
+    "jupyterlab>=4.0.0,<5",
     "jupyter_server>=2.0.1,<3",
     "langgraph>=0.0.1",
-    "langgraph-stream-parser>=0.6,<0.7",
+    # >=0.6.3 carries the agent-name slugify fix that keeps OpenAI-compatible
+    # providers from 400ing on a display name with a space (gh #23).
+    "langgraph-stream-parser>=0.6.3,<0.7",
     "python-dotenv>=0.19.0",
     "deepagents>=0.1.0",
     # Direct top-level imports in langstage_jupyter/agent.py. Previously only
@@ -51,7 +59,7 @@ dev = [
     "pytest-cov>=4.0.0",
     "pytest-asyncio>=0.21.0",
 ]
-agui = ["langgraph-stream-parser[agui]>=0.6,<0.7"]
+agui = ["langgraph-stream-parser[agui]>=0.6.3,<0.7"]
 
 [tool.hatch.version]
 source = "nodejs"
