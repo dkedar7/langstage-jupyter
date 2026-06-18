@@ -16,6 +16,7 @@ Example:
     langstage-jupyter --demo                   # keyless demo agent, no API key
     langstage-jupyter --show-config            # print resolved config and exit
 """
+import importlib.util
 import os
 import sys
 import socket
@@ -24,6 +25,29 @@ import subprocess
 
 # The keyless echo agent shipped with the shared core — see `--demo`.
 DEMO_AGENT_SPEC = "langgraph_stream_parser.demo.stub:graph"
+
+
+def ensure_jupyterlab():
+    """Fail fast with an actionable hint if JupyterLab isn't importable.
+
+    JupyterLab is a declared runtime dependency, but a user on an older/odd
+    install may still lack it. The launcher runs ``jupyter lab``; if JupyterLab
+    is absent the ``jupyter`` dispatcher (shipped by ``jupyter_server``) is
+    *present* and simply prints its help + ``jupyter-lab not found`` and exits
+    non-zero — it does **not** raise ``FileNotFoundError``. So the old
+    ``except FileNotFoundError`` guard never fired and the user got a cryptic
+    help dump instead of guidance (gh #24). Pre-checking the import is the
+    reliable signal.
+    """
+    if importlib.util.find_spec("jupyterlab") is None:
+        print(
+            "ERROR: JupyterLab is not installed, so `jupyter lab` cannot start.\n"
+            "  Install it with:\n"
+            "    pip install jupyterlab\n"
+            "  (or reinstall this package, which now depends on it: "
+            "pip install --upgrade langstage-jupyter)"
+        )
+        sys.exit(1)
 
 
 def extract_agent_args(args):
@@ -84,6 +108,11 @@ def main():
         from langstage_jupyter.config import LabConfig
         print(LabConfig.resolve().describe())
         return
+
+    # Headline command runs `jupyter lab` — bail with a clear hint up front if
+    # JupyterLab isn't installed, instead of letting the jupyter dispatcher dump
+    # its help later (gh #24).
+    ensure_jupyterlab()
 
     # Our agent flags must not reach `jupyter lab` (it would reject them).
     agent_spec, demo, args = extract_agent_args(args)
