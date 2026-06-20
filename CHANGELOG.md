@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.5.4 - 2026-06-20
+
+### Fixed
+- **`langstage.toml` was silently ignored by the default agent (gh #-dogfood).**
+  The module-level config constants were resolved with `use_toml=False`, so the
+  agent ran on env+defaults while `--show-config` advertised `langstage.toml` as a
+  live source. The constants now resolve with TOML on, matching `--show-config`.
+- **Canonical `LANGSTAGE_EXECUTE_TIMEOUT` was ignored** (only the deprecated
+  `DEEPAGENT_EXECUTE_TIMEOUT` worked). `EXECUTE_TIMEOUT` now comes from the
+  resolved `LabConfig` (canonical env + legacy + TOML), and the `get_config()`
+  helper checks the canonical `LANGSTAGE_*` name first.
+- **Workspace-root env precedence was inverted** — `agent.py` read
+  `DEEPAGENT_WORKSPACE_ROOT` directly *before* the resolved config, so the legacy
+  name overrode the canonical `LANGSTAGE_WORKSPACE_ROOT`. It now defers to the
+  resolved `config.WORKSPACE_ROOT` (canonical wins, legacy warns).
+- **Launcher booted the wrong Jupyter (gh #-dogfood).** It shelled out to a bare
+  `jupyter` from `PATH`; when another Jupyter preceded the venv on `PATH` (common
+  on Windows), the chat extension silently never loaded. It now launches via this
+  interpreter (`sys.executable -m jupyterlab`), guaranteeing the env that owns the
+  labextension + server-config.
+- **`langstage-jupyter --version`** reported JupyterLab's version (it was passed
+  through to `jupyter lab`); it now prints this package's version and exits.
+
 ## 0.5.3 - 2026-06-18
 
 ### Fixed

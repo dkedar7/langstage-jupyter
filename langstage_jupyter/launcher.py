@@ -102,6 +102,17 @@ def main():
     # Parse command line arguments
     args = sys.argv[1:]
 
+    # --version: report THIS package's version and exit. Passing it through to
+    # `jupyter lab` printed JupyterLab's version instead (gh #-dogfood).
+    if "--version" in args or "-V" in args:
+        from importlib.metadata import PackageNotFoundError, version
+
+        try:
+            print(f"langstage-jupyter {version('langstage-jupyter')}")
+        except PackageNotFoundError:  # pragma: no cover
+            print("langstage-jupyter 0.0.0+local")
+        return
+
     # --show-config: print the resolved config (value, source, env var / TOML
     # key for each) and exit — no need to remember the DEEPAGENT_* names.
     if "--show-config" in args:
@@ -185,8 +196,12 @@ def main():
     print(f"    - LANGSTAGE_JUPYTER_TOKEN")
     print(f"{'='*60}\n")
 
-    # Build jupyter lab command
-    jupyter_args = ['jupyter', 'lab']
+    # Launch JupyterLab via THIS interpreter (sys.executable -m jupyterlab),
+    # not a bare `jupyter` resolved from PATH. The labextension + server-config
+    # are installed into this environment; if another Jupyter sits earlier on
+    # PATH (common on Windows with a user-site Python), `jupyter lab` boots the
+    # wrong app and the chat sidebar silently never loads (gh #-dogfood).
+    jupyter_args = [sys.executable, '-m', 'jupyterlab']
 
     # Add port if not already specified by user
     if not port_specified:

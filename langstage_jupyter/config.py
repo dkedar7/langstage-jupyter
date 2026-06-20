@@ -16,13 +16,15 @@ from langgraph_stream_parser.host import HostConfig, load_toml_config  # noqa: F
 
 
 def get_config(key: str, default: Any = None, type_cast: Optional[Callable] = None) -> Any:
-    """Get a config value from a ``DEEPAGENT_{KEY}`` env var (env-only helper).
+    """Get a config value from env, canonical ``LANGSTAGE_{KEY}`` first.
 
-    Priority: env var ``DEEPAGENT_{KEY}`` > default. Retained for ad-hoc keys
-    (e.g. ``execute_timeout``) and back-compat.
+    Priority: ``LANGSTAGE_{KEY}`` > legacy ``DEEPAGENT_{KEY}`` > default. The
+    canonical spelling must work — it's what ``--show-config`` advertises — so
+    this no longer reads only the legacy name (gh #-dogfood).
     """
-    env_key = f"DEEPAGENT_{key.upper()}"
-    env_value = os.getenv(env_key)
+    canonical = os.getenv(f"LANGSTAGE_{key.upper()}")
+    legacy = os.getenv(f"DEEPAGENT_{key.upper()}")
+    env_value = canonical if canonical is not None else legacy
     if env_value is not None:
         return type_cast(env_value) if type_cast else env_value
     return default
@@ -72,10 +74,12 @@ class LabConfig(HostConfig):
     }
 
 
-# Module-level constants — an env + defaults view (no TOML) derived from
-# LabConfig, for back-compat with call sites that read ``config.X``. Full
-# TOML-aware resolution is ``LabConfig.resolve()`` (used by the launcher).
-_cfg = LabConfig.resolve(use_toml=False)
+# Module-level constants derived from LabConfig, for call sites that read
+# ``config.X`` (agent.py, agent_wrapper.py). TOML is ON so these honor
+# ``langstage.toml`` — the same resolution ``--show-config`` advertises.
+# Previously this used ``use_toml=False``, so the default agent silently ignored
+# langstage.toml while --show-config presented it as a live source (gh #-dogfood).
+_cfg = LabConfig.resolve()
 
 WORKSPACE_ROOT: Optional[Path] = (
     _cfg.workspace_root.resolve()
@@ -91,3 +95,7 @@ MODEL_NAME = _cfg.model_name
 MODEL_TEMPERATURE = _cfg.model_temperature
 DEBUG = _cfg.debug
 VIRTUAL_MODE = _cfg.virtual_mode
+# Resolved through LabConfig so canonical LANGSTAGE_EXECUTE_TIMEOUT and
+# jupyter.execute_timeout in langstage.toml both apply (the old get_config()
+# read only DEEPAGENT_EXECUTE_TIMEOUT). agent.py reads this constant.
+EXECUTE_TIMEOUT = _cfg.execute_timeout
