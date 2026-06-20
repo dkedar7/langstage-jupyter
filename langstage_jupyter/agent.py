@@ -29,11 +29,12 @@ kernel_clients = {}
 
 # === Configuration ===
 
-# Get workspace root from environment or config
-workspace_root = os.getenv('DEEPAGENT_WORKSPACE_ROOT')
-if workspace_root:
-    WORKSPACE = Path(workspace_root)
-elif config.WORKSPACE_ROOT:
+# Workspace root comes from the resolved config (config.WORKSPACE_ROOT honors
+# canonical LANGSTAGE_WORKSPACE_ROOT, legacy DEEPAGENT_WORKSPACE_ROOT, and
+# langstage.toml with the correct precedence). Reading DEEPAGENT_WORKSPACE_ROOT
+# directly here used to override the canonical name — precedence inversion fixed
+# by deferring to config (gh #-dogfood).
+if config.WORKSPACE_ROOT:
     WORKSPACE = config.WORKSPACE_ROOT
 else:
     WORKSPACE = Path(".")
@@ -47,8 +48,10 @@ MODEL_NAME = config.MODEL_NAME
 MODEL_TEMPERATURE = config.MODEL_TEMPERATURE
 
 # Total seconds to wait for a single cell to finish executing before reporting
-# possibly-incomplete output. Override via DEEPAGENT_EXECUTE_TIMEOUT.
-EXECUTE_TIMEOUT = config.get_config("execute_timeout", default=300.0, type_cast=float)
+# possibly-incomplete output. From the resolved config so LANGSTAGE_EXECUTE_TIMEOUT
+# (canonical), DEEPAGENT_EXECUTE_TIMEOUT (legacy), and jupyter.execute_timeout in
+# langstage.toml all apply.
+EXECUTE_TIMEOUT = config.EXECUTE_TIMEOUT
 
 # === Tool Definitions ===
 
