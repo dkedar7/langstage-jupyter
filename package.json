@@ -1,6 +1,6 @@
 {
   "name": "langstage-jupyter",
-  "version": "0.5.4",
+  "version": "0.5.5",
   "description": "JupyterLab extension with chat interface for DeepAgents",
   "keywords": [
     "jupyter",

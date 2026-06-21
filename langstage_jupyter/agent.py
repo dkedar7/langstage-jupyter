@@ -453,7 +453,7 @@ def execute_cell(
     if timed_out:
         output_texts.append(
             f"[langstage-jupyter] Cell exceeded EXECUTE_TIMEOUT={EXECUTE_TIMEOUT}s; "
-            "output above may be incomplete. Set DEEPAGENT_EXECUTE_TIMEOUT to raise the budget."
+            "output above may be incomplete. Set LANGSTAGE_EXECUTE_TIMEOUT to raise the budget."
         )
     
     # Update cell in notebook

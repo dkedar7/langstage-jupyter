@@ -26,6 +26,22 @@ import subprocess
 # The keyless echo agent shipped with the shared core — see `--demo`.
 DEMO_AGENT_SPEC = "langgraph_stream_parser.demo.stub:graph"
 
+_LAUNCHER_HELP = """\
+langstage-jupyter - launch JupyterLab with the LangStage chat sidebar.
+
+Usage:
+  langstage-jupyter [launcher options] [jupyter lab options...]
+
+Launcher options:
+  -a, --agent SPEC   Agent to load (module:attr or path/to/file.py:attr).
+  --demo             Use the built-in keyless demo agent (no API key).
+  --show-config      Print the resolved configuration and exit.
+  --version, -V      Print the langstage-jupyter version and exit.
+  -h, --help         Show this message and exit.
+
+All other options are passed through to `jupyter lab`
+(run `jupyter lab --help` to see those)."""
+
 
 def ensure_jupyterlab():
     """Fail fast with an actionable hint if JupyterLab isn't importable.
@@ -102,6 +118,13 @@ def main():
     # Parse command line arguments
     args = sys.argv[1:]
 
+    # --help / -h: show the LAUNCHER's own flags. Otherwise --help passes through
+    # to `jupyter lab`, which dumps JupyterLab's help and never mentions
+    # --demo / -a / --show-config / --version (gh #-dogfood).
+    if "--help" in args or "-h" in args:
+        print(_LAUNCHER_HELP)
+        return
+
     # --version: report THIS package's version and exit. Passing it through to
     # `jupyter lab` printed JupyterLab's version instead (gh #-dogfood).
     if "--version" in args or "-V" in args:
@@ -113,19 +136,10 @@ def main():
             print("langstage-jupyter 0.0.0+local")
         return
 
-    # --show-config: print the resolved config (value, source, env var / TOML
-    # key for each) and exit — no need to remember the DEEPAGENT_* names.
-    if "--show-config" in args:
-        from langstage_jupyter.config import LabConfig
-        print(LabConfig.resolve().describe())
-        return
-
-    # Headline command runs `jupyter lab` — bail with a clear hint up front if
-    # JupyterLab isn't installed, instead of letting the jupyter dispatcher dump
-    # its help later (gh #24).
-    ensure_jupyterlab()
-
-    # Our agent flags must not reach `jupyter lab` (it would reject them).
+    # Parse our agent flags FIRST (strip them from args, set env) so --show-config
+    # reflects the agent the same invocation would launch. Previously --show-config
+    # short-circuited before this and always reported agent_spec=None even with
+    # -a/--demo (gh #-dogfood).
     agent_spec, demo, args = extract_agent_args(args)
     if demo and agent_spec:
         print("ERROR: --demo and -a/--agent are mutually exclusive")
@@ -139,7 +153,21 @@ def main():
         # keeps working with this launcher.
         os.environ["LANGSTAGE_AGENT_SPEC"] = agent_spec
         os.environ["DEEPAGENT_AGENT_SPEC"] = agent_spec
+
+    # --show-config: print the resolved config (value, source, env var / TOML
+    # key for each) and exit — now reflecting any -a/--demo parsed above.
+    if "--show-config" in args:
+        from langstage_jupyter.config import LabConfig
+        print(LabConfig.resolve().describe())
+        return
+
+    if agent_spec:
         print(f"Agent spec: {agent_spec}")
+
+    # Headline command runs `jupyter lab` — bail with a clear hint up front if
+    # JupyterLab isn't installed, instead of letting the jupyter dispatcher dump
+    # its help later (gh #24).
+    ensure_jupyterlab()
 
     # Check if user specified a port
     user_port = None
