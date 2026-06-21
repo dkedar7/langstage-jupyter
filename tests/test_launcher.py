@@ -74,6 +74,31 @@ class TestMainAgentWiring:
             main()
 
 
+class TestLauncherHelpAndShowConfig:
+    """--help shows the launcher's own flags; --show-config reflects -a/--demo."""
+
+    def test_help_lists_launcher_flags(self, monkeypatch, capsys):
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", "--help"])
+        main()
+        out = capsys.readouterr().out
+        assert "--demo" in out
+        assert "--show-config" in out
+        assert "--agent" in out
+        assert "jupyter lab" in out  # notes the passthrough
+        # ASCII-only so it doesn't mojibake on a cp1252 console.
+        assert out.isascii(), "launcher help must be ASCII-safe"
+
+    def test_show_config_reflects_agent_flag(self, monkeypatch, capsys):
+        monkeypatch.setenv("LANGSTAGE_AGENT_SPEC", "")
+        monkeypatch.setenv("DEEPAGENT_AGENT_SPEC", "")
+        monkeypatch.setattr(
+            "sys.argv", ["langstage-jupyter", "--show-config", "-a", "foo.py:graph"]
+        )
+        main()
+        out = capsys.readouterr().out
+        assert "foo.py:graph" in out  # not agent_spec=None
+
+
 class TestFindAvailablePort:
     """Tests for find_available_port function."""
 

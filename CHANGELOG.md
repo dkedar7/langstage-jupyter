@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.5.5 - 2026-06-21
+
+### Fixed
+- **`langstage-jupyter --help`** passed straight through to `jupyter lab` and never
+  documented the launcher's own flags (`--demo`, `-a/--agent`, `--show-config`,
+  `--version`). It now prints a short launcher usage block (ASCII-only, so it can't
+  mojibake on a cp1252 console) and points at `jupyter lab --help` for the rest.
+- **`--show-config` ignored `-a/--agent` and `--demo`** (it short-circuited before
+  parsing them, always reporting `agent_spec=None`). Agent flags are now parsed
+  first, so `--show-config` reflects the agent the same invocation would launch.
+- **The cell-timeout warning** told users to set the deprecated
+  `DEEPAGENT_EXECUTE_TIMEOUT`; it now names the canonical `LANGSTAGE_EXECUTE_TIMEOUT`.
+
+### Docs
+- Regenerated `.env.example` with canonical `LANGSTAGE_*` names (it was 100%
+  pre-rename `DEEPAGENT_*` and referenced the old `deepagent-lab`/`deepagent-dash`
+  identity), aligned to the current default model.
+
 ## 0.5.4 - 2026-06-20
 
 ### Fixed
