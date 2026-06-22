@@ -152,13 +152,16 @@ class TestSetRootDir:
     @patch('langstage_jupyter.agent_wrapper.AgentWrapper._load_agent')
     @patch('os.environ', {})
     def test_sets_environment_variable(self, mock_load):
-        """Should set DEEPAGENT_WORKSPACE_ROOT environment variable."""
+        """Should publish BOTH the canonical and legacy workspace-root env vars."""
         import os
         wrapper = AgentWrapper()
         wrapper.agent = Mock()
 
         wrapper.set_root_dir("/home/user/workspace")
 
+        # Canonical name is what the README's custom-agent example reads.
+        assert os.environ['LANGSTAGE_WORKSPACE_ROOT'] == "/home/user/workspace"
+        # Legacy name stays set for back-compat with anything still reading it.
         assert os.environ['DEEPAGENT_WORKSPACE_ROOT'] == "/home/user/workspace"
 
     @patch('langstage_jupyter.agent_wrapper.AgentWrapper._load_agent')

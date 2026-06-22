@@ -115,12 +115,19 @@ class AgentWrapper:
     def set_root_dir(self, root_dir: str):
         """
         Set the root directory on the agent's backend if it has one.
-        Also sets the DEEPAGENT_WORKSPACE_ROOT environment variable.
+        Also publishes the workspace root as an environment variable for agents
+        to discover.
 
         Args:
             root_dir: The root directory path (JupyterLab launch directory)
         """
-        # Set environment variable for agents to discover
+        # Publish BOTH the canonical and the legacy env name. The README's own
+        # custom-agent example reads canonical `LANGSTAGE_WORKSPACE_ROOT`, so a
+        # user following the docs verbatim would otherwise see "." instead of
+        # the live JupyterLab root — the agent's read path was renamed (0.5.4)
+        # but this write path still published only the deprecated name.
+        # (gh #-dogfood)
+        os.environ['LANGSTAGE_WORKSPACE_ROOT'] = root_dir
         os.environ['DEEPAGENT_WORKSPACE_ROOT'] = root_dir
 
         if self.agent and hasattr(self.agent, 'backend'):
