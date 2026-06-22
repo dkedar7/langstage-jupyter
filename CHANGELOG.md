@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.6 - 2026-06-22
+
+### Fixed
+- **JupyterLab → agent workspace hand-off only set the *legacy* env name.**
+  `AgentWrapper.set_root_dir()` published the live JupyterLab root as
+  `DEEPAGENT_WORKSPACE_ROOT` only, but the README's own custom-agent example
+  (and the documented env table) read the canonical `LANGSTAGE_WORKSPACE_ROOT`.
+  A user following the docs verbatim got `'.'` instead of their notebook project
+  directory. The agent's *read* path was renamed in 0.5.4, but this *write* path
+  still published the deprecated name. It now sets both (canonical + legacy).
+  (Found by the dogfood routine.)
+
 ## 0.5.5 - 2026-06-21
 
 ### Fixed
