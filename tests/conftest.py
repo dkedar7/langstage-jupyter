@@ -10,16 +10,21 @@ from unittest.mock import Mock
 @pytest.fixture
 def clean_env(monkeypatch):
     """
-    Fixture that provides a clean environment without DEEPAGENT_* variables.
+    Fixture that provides a clean environment without LANGSTAGE_*/DEEPAGENT_* vars.
+
+    Must clear BOTH vocabularies: the canonical ``LANGSTAGE_*`` names take
+    precedence over the legacy ``DEEPAGENT_*`` ones, so leaving a canonical name
+    set (e.g. ``LANGSTAGE_WORKSPACE_ROOT`` published by a prior ``set_root_dir``
+    call) would override the legacy value a test sets and silently corrupt
+    config resolution.
 
     Usage:
         def test_something(clean_env):
-            # All DEEPAGENT_* env vars are removed
+            # All LANGSTAGE_*/DEEPAGENT_* env vars are removed
             pass
     """
-    # Remove all DEEPAGENT_* environment variables
     for key in list(os.environ.keys()):
-        if key.startswith('DEEPAGENT_'):
+        if key.startswith(('LANGSTAGE_', 'DEEPAGENT_')):
             monkeypatch.delenv(key, raising=False)
     return monkeypatch
 
