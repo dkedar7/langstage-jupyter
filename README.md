@@ -202,7 +202,7 @@ All configuration uses the `LANGSTAGE_` prefix (the pre-rename `DEEPAGENT_` name
 
 When using the `langstage-jupyter` launcher, `LANGSTAGE_JUPYTER_SERVER_URL` and `LANGSTAGE_JUPYTER_TOKEN` are automatically configured and don't need to be set.
 
-See [.env.example](.env.example) for a complete configuration template.
+See [.env.example](https://github.com/dkedar7/langstage-jupyter/blob/main/.env.example) for a complete configuration template.
 
 ## Interface Controls
 
