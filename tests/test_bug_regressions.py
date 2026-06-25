@@ -45,10 +45,18 @@ def test_default_agent_name_is_provider_safe():
 
 
 def test_core_floor_carries_slugify_fix():
-    """#23: the core dep floor must be >=0.6.3 (where the slugify fix landed)."""
+    """#23: the core dep floor must be >=0.6.3 (where the slugify fix landed).
+
+    Parse the lower bound rather than substring-match a literal, so routine
+    floor bumps (e.g. >=0.6.11 for describe(omit_keys)) don't trip this guard.
+    """
+    import re
+
     deps = _PYPROJECT["project"]["dependencies"]
     core = next(d for d in deps if d.lower().startswith("langgraph-stream-parser"))
-    assert ">=0.6.3" in core, core
+    m = re.search(r">=\s*(\d+)\.(\d+)\.(\d+)", core)
+    assert m, core
+    assert tuple(int(g) for g in m.groups()) >= (0, 6, 3), core
 
 
 def test_jupyterlab_is_a_declared_runtime_dependency():

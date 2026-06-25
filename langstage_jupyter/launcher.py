@@ -158,7 +158,12 @@ def main():
     # key for each) and exit — now reflecting any -a/--demo parsed above.
     if "--show-config" in args:
         from langstage_jupyter.config import LabConfig
-        print(LabConfig.resolve().describe())
+        # Hide the inherited web-app keys this stage doesn't honor: JupyterLab's
+        # port is the auto-detected port or --port (never LANGSTAGE_PORT), and
+        # the host is always localhost. Advertising them with an env-var source
+        # taught a wrong mental model ("I set LANGSTAGE_PORT but it didn't
+        # apply"). (gh #30)
+        print(LabConfig.resolve().describe(omit_keys=["host", "port"]))
         return
 
     if agent_spec:

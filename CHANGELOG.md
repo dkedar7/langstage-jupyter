@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.7 - 2026-06-25
+
+### Fixed
+- **`--show-config` advertised `LANGSTAGE_PORT` / `LANGSTAGE_HOST`, which the
+  launcher ignores.** Those keys are inherited from the shared `HostConfig`
+  (real for the web-app stage), but JupyterLab's port is always the
+  auto-detected port or `--port`, and the host is always `localhost`. So
+  `--show-config` reported a value and a "source" env var with zero effect —
+  teaching a wrong mental model ("I set `LANGSTAGE_PORT` but it didn't apply").
+  The two inert rows are now dropped from `--show-config` via core's new
+  `describe(omit_keys=…)` (requires `langgraph-stream-parser>=0.6.11`). (Found
+  by the dogfood routine, gh #30.)
+
 ## 0.5.6 - 2026-06-22
 
 ### Fixed

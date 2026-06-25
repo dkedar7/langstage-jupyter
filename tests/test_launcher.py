@@ -98,6 +98,22 @@ class TestLauncherHelpAndShowConfig:
         out = capsys.readouterr().out
         assert "foo.py:graph" in out  # not agent_spec=None
 
+    def test_show_config_omits_inert_host_port(self, monkeypatch, capsys):
+        # The launcher never honors LANGSTAGE_HOST/PORT (JupyterLab uses --port /
+        # auto-detect and binds localhost), so --show-config must not advertise
+        # them with a live env-var source. (gh #30)
+        monkeypatch.setenv("LANGSTAGE_PORT", "7777")
+        monkeypatch.setenv("LANGSTAGE_HOST", "0.0.0.0")
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", "--show-config"])
+        main()
+        out = capsys.readouterr().out
+        assert "LANGSTAGE_PORT" not in out
+        assert "LANGSTAGE_HOST" not in out
+        assert "\n  port " not in out
+        assert "\n  host " not in out
+        # ...but keys this stage actually honors are still shown.
+        assert "agent_spec" in out
+
 
 class TestFindAvailablePort:
     """Tests for find_available_port function."""
