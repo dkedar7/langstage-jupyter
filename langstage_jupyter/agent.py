@@ -10,8 +10,11 @@ import time
 from pathlib import Path
 from typing import Annotated
 
-from dotenv import load_dotenv
-load_dotenv()
+from dotenv import find_dotenv, load_dotenv
+# Resolve .env from the user's working (launch) directory, not the installed
+# package location — a bare load_dotenv() searches from site-packages and never
+# finds the user's project .env. (gh #32)
+load_dotenv(find_dotenv(usecwd=True))
 
 from langgraph_stream_parser.demo import create_default_agent as _build_default_agent
 from langchain.chat_models import init_chat_model

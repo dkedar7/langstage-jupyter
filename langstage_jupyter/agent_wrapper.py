@@ -8,8 +8,12 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, Iterator, Optional
 
-from dotenv import load_dotenv
-load_dotenv()
+from dotenv import find_dotenv, load_dotenv
+# Resolve .env from the user's working (launch) directory, not the installed
+# package location. A bare load_dotenv() searches upward from this module inside
+# site-packages, so the user's project .env is never found and silently ignored.
+# (gh #32)
+load_dotenv(find_dotenv(usecwd=True))
 
 # Import configuration
 from . import config
