@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.8 - 2026-06-26
+
+### Fixed
+- **`.env` files were silently ignored at runtime.** `agent.py` and
+  `agent_wrapper.py` called a bare `load_dotenv()`, which searches upward from
+  the calling module — inside `site-packages` once installed — so a user's
+  project `.env` (the documented "create a `.env` file" path, and the whole
+  point of `.env.example`) was never found, and every setting in it silently
+  fell back to defaults. Both now resolve via `load_dotenv(find_dotenv(usecwd=True))`,
+  anchoring `.env` to the launch directory (matching how `langstage.toml` is
+  already discovered). Exported shell env vars were unaffected. (Found by the
+  dogfood routine, gh #32.)
+
 ## 0.5.7 - 2026-06-25
 
 ### Fixed
