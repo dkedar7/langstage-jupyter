@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.9 - 2026-06-27
+
+### Fixed
+- **`--show-config` advertised more keys the launcher doesn't honor.** Completing
+  the #30 fix: `title` is inherited from the web-app `HostConfig` but read
+  nowhere in this stage, and `jupyter_token` / `jupyter_server_url` are
+  auto-generated/-detected at startup and overridden by the launcher (a
+  user-set `LANGSTAGE_JUPYTER_TOKEN` is silently discarded — pin via the
+  standard `JUPYTER_TOKEN`). All three are now dropped from the launcher's
+  `--show-config` via `describe(omit_keys=…)`, so it only advertises keys this
+  stage actually honors. (Found by the dogfood routine, gh #34.)
+
 ## 0.5.8 - 2026-06-26
 
 ### Fixed
