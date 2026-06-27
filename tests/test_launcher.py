@@ -114,6 +114,22 @@ class TestLauncherHelpAndShowConfig:
         # ...but keys this stage actually honors are still shown.
         assert "agent_spec" in out
 
+    def test_show_config_omits_launcher_managed_keys(self, monkeypatch, capsys):
+        # title is read nowhere in this stage; jupyter_token / jupyter_server_url
+        # are auto-generated/-detected and the launcher overrides them — so none
+        # of the three should be advertised with a live source. (gh #34)
+        monkeypatch.setenv("LANGSTAGE_TITLE", "MyTitle")
+        monkeypatch.setenv("LANGSTAGE_JUPYTER_TOKEN", "pinned-tok")
+        monkeypatch.setenv("LANGSTAGE_JUPYTER_SERVER_URL", "http://localhost:9999")
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", "--show-config"])
+        main()
+        out = capsys.readouterr().out
+        for key in ("\n  title ", "\n  jupyter_token ", "\n  jupyter_server_url "):
+            assert key not in out, key
+        for env in ("LANGSTAGE_TITLE", "LANGSTAGE_JUPYTER_TOKEN", "LANGSTAGE_JUPYTER_SERVER_URL"):
+            assert env not in out, env
+        assert "agent_spec" in out
+
 
 class TestFindAvailablePort:
     """Tests for find_available_port function."""
