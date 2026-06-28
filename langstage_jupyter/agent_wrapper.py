@@ -67,6 +67,12 @@ class AgentWrapper:
             self.agent_variable_name = agent_variable_name or config.AGENT_VARIABLE
 
         self._load_agent()
+        # The root the agent's backend was just built from (config.WORKSPACE_ROOT,
+        # else cwd "."). set_root_dir() compares against this so it only rebuilds
+        # when JupyterLab's live root actually differs. (gh #36)
+        self._applied_root = self._resolve_root(
+            str(config.WORKSPACE_ROOT) if config.WORKSPACE_ROOT else "."
+        )
 
     def _load_agent(self):
         """Load the agent via the shared host loader.
@@ -105,10 +111,16 @@ class AgentWrapper:
     def reload_agent(self):
         """Reload the agent module (useful for development)."""
         # Clear the module from sys.modules if it's there
+        # Clear the agent module (and its submodules) from sys.modules so the next
+        # load re-imports it. Match exactly or on a dotted-submodule prefix — a
+        # bare substring check also nuked unrelated modules (the module path
+        # 'langstage_jupyter.agent' is a substring of '...agent_wrapper'). (gh #36)
+        path = self.agent_module_path
         modules_to_remove = [
             mod_name for mod_name in sys.modules
-            if (self.agent_module_path in mod_name or
-                mod_name.startswith('custom_agent_'))
+            if (mod_name == path
+                or mod_name.startswith(path + ".")
+                or mod_name.startswith('custom_agent_'))
         ]
         for mod_name in modules_to_remove:
             del sys.modules[mod_name]
@@ -116,11 +128,20 @@ class AgentWrapper:
         # Reload
         self._load_agent()
 
+    @staticmethod
+    def _resolve_root(root: str) -> str:
+        """Normalize a root path for change comparison (absolute, expanded)."""
+        try:
+            return str(Path(root).expanduser().resolve())
+        except Exception:
+            return str(root)
+
     def set_root_dir(self, root_dir: str):
         """
-        Set the root directory on the agent's backend if it has one.
+        Re-point the agent's filesystem backend at JupyterLab's live root.
         Also publishes the workspace root as an environment variable for agents
-        to discover.
+        to discover. Called on every chat message; the agent is rebuilt only when
+        the resolved root actually changes.
 
         Args:
             root_dir: The root directory path (JupyterLab launch directory)
@@ -134,21 +155,43 @@ class AgentWrapper:
         os.environ['LANGSTAGE_WORKSPACE_ROOT'] = root_dir
         os.environ['DEEPAGENT_WORKSPACE_ROOT'] = root_dir
 
-        if self.agent and hasattr(self.agent, 'backend'):
+        # Re-root only on an actual change — set_root_dir runs on every message,
+        # and rebuilding each time would be wasteful and reset agent state.
+        resolved = self._resolve_root(root_dir)
+        if resolved == getattr(self, "_applied_root", None):
+            return
+        self._applied_root = resolved
+
+        # Fast path: an agent exposing a mutable filesystem backend is re-pointed
+        # in place. deepagents' CompiledStateGraph does NOT expose `.backend`, so
+        # this is for custom agents / future deepagents. (The old import path,
+        # `deepagents.tools.filesystem`, never existed — it's `deepagents.backends`.)
+        if self.agent is not None and hasattr(self.agent, 'backend'):
             try:
-                # Import FilesystemBackend dynamically
-                from deepagents.tools.filesystem import FilesystemBackend
-                # Update the backend's root_dir
+                from deepagents.backends import FilesystemBackend
                 self.agent.backend = FilesystemBackend(
                     root_dir=root_dir,
-                    virtual_mode=config.VIRTUAL_MODE
+                    virtual_mode=config.VIRTUAL_MODE,
                 )
                 print(f"Set agent backend root_dir to: {root_dir}")
+                return
             except ImportError:
-                # FilesystemBackend not available, skip
                 pass
             except Exception as e:
                 print(f"Warning: Could not set agent backend root_dir: {e}")
+
+        # General path (the bundled default and `create_deep_agent` agents): their
+        # FilesystemBackend is built from `config.WORKSPACE_ROOT` at import time, so
+        # refresh that resolved value and rebuild the agent — its backend then
+        # re-roots at the live directory. Previously this branch was dead (wrong
+        # import + a guard that's never true for a CompiledStateGraph), so the
+        # documented re-root never happened. (gh #36)
+        try:
+            config.WORKSPACE_ROOT = Path(resolved)
+            self.reload_agent()
+            print(f"Re-rooted agent filesystem to: {root_dir}")
+        except Exception as e:
+            print(f"Warning: Could not re-root agent to {root_dir}: {e}")
 
     def _append_context_to_message(self, message: str, context: Optional[Dict[str, Any]]) -> str:
         """
