@@ -1,6 +1,6 @@
 {
   "name": "langstage-jupyter",
-  "version": "0.5.10",
+  "version": "0.5.11",
   "description": "JupyterLab extension with chat interface for DeepAgents",
   "keywords": [
     "jupyter",
@@ -29,7 +29,7 @@
   },
   "scripts": {
     "build": "yarn build:lib && yarn build:labextension:dev",
-    "build:prod": "yarn clean && yarn build:lib:prod && yarn build:labextension",
+    "build:prod": "yarn clean:all && yarn build:lib:prod && yarn build:labextension",
     "build:labextension": "jupyter labextension build .",
     "build:labextension:dev": "jupyter labextension build --development True .",
     "build:lib": "tsc --sourceMap",
@@ -37,7 +37,7 @@
     "clean": "yarn clean:lib",
     "clean:lib": "rimraf lib tsconfig.tsbuildinfo",
     "clean:lintcache": "rimraf .eslintcache .stylelintcache",
-    "clean:labextension": "rimraf langstage_jupyter/labextension langstage_jupyter/*.tgz",
+    "clean:labextension": "rimraf langstage_jupyter/labextension",
     "clean:all": "yarn clean:lib && yarn clean:labextension && yarn clean:lintcache",
     "install:extension": "yarn build",
     "watch": "run-p watch:src watch:labextension",
