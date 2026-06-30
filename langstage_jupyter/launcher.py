@@ -181,22 +181,25 @@ def main():
 
     # Check if user specified a port
     user_port = None
-    port_specified = False
     for i, arg in enumerate(args):
         if arg == '--port' and i + 1 < len(args):
-            try:
-                user_port = int(args[i + 1])
-                port_specified = True
-            except ValueError:
-                pass
-            break
+            raw = args[i + 1]
         elif arg.startswith('--port='):
-            try:
-                user_port = int(arg.split('=')[1])
-                port_specified = True
-            except ValueError:
-                pass
-            break
+            raw = arg.split('=', 1)[1]
+        else:
+            continue
+        # A --port was supplied — it MUST parse. If it doesn't (including an empty
+        # value, e.g. `--port=$PORT` with PORT unset), fail fast with a clear
+        # message. Previously we silently swallowed the parse error, auto-detected
+        # our OWN port, AND still passed the user's malformed --port token through
+        # to jupyter lab — so jupyter aborted with a confusing "port only accepts
+        # one value, got 2" naming a port the user never typed. (gh #40)
+        try:
+            user_port = int(raw)
+        except (ValueError, TypeError):
+            print(f"ERROR: invalid --port value: {raw!r}")
+            sys.exit(1)
+        break
 
     # Find available port
     if user_port:
@@ -241,8 +244,9 @@ def main():
     # wrong app and the chat sidebar silently never loads (gh #-dogfood).
     jupyter_args = [sys.executable, '-m', 'jupyterlab']
 
-    # Add port if not already specified by user
-    if not port_specified:
+    # Inject our auto-detected port only when the user didn't supply a valid one
+    # (a malformed --port already exited above), so we never pass two --port values.
+    if user_port is None:
         jupyter_args.extend(['--port', str(port)])
 
     # Add token

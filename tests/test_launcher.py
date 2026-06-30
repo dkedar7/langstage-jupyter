@@ -251,3 +251,36 @@ class TestLauncherIntegration:
 
         assert os.getenv('DEEPAGENT_JUPYTER_SERVER_URL') == f"http://localhost:{test_port}"
         assert os.getenv('DEEPAGENT_JUPYTER_TOKEN') == test_token
+
+
+class TestPortHandling:
+    """--port parse-failure must fail fast, not inject a duplicate port (gh #40)."""
+
+    def _run_main(self, argv, monkeypatch):
+        calls = {}
+
+        def fake_run(cmd, env=None):
+            calls["cmd"] = cmd
+
+        monkeypatch.setattr("langstage_jupyter.launcher.subprocess.run", fake_run)
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter"] + argv)
+        main()
+        return calls
+
+    @pytest.mark.parametrize("bad", ["--port=", "--port=notaport"])
+    def test_malformed_port_exits_cleanly(self, monkeypatch, capsys, bad):
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", bad, "--no-browser"])
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 1
+        assert "invalid --port value" in capsys.readouterr().out
+
+    def test_valid_port_is_not_duplicated(self, monkeypatch):
+        calls = self._run_main(["--port=19191", "--no-browser"], monkeypatch)
+        # the launcher must NOT inject its own --port on top of the user's.
+        assert calls["cmd"].count("--port") == 0  # space-form not added...
+        assert "--port=19191" in calls["cmd"]  # ...the user's token passes through once
+
+    def test_no_port_auto_injects_one(self, monkeypatch):
+        calls = self._run_main(["--no-browser"], monkeypatch)
+        assert calls["cmd"].count("--port") == 1  # exactly one, auto-detected
