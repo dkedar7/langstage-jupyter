@@ -33,7 +33,7 @@ dependencies = [
     # >=0.6.11 carries describe(omit_keys=...) (so --show-config can hide the
     # inherited host/port rows this stage doesn't honor); also the agent-name
     # slugify fix (gh #23) and BOM-safe TOML.
-    "langgraph-stream-parser>=0.6.11,<0.7",
+    "langgraph-stream-parser>=0.6.17,<0.7",
     "python-dotenv>=0.19.0",
     "deepagents>=0.1.0",
     # Direct top-level imports in langstage_jupyter/agent.py. Previously only
@@ -64,7 +64,7 @@ dev = [
     "ag-ui-langgraph>=0.0.41",
     "fastapi",
 ]
-agui = ["langgraph-stream-parser[agui]>=0.6.11,<0.7"]
+agui = ["langgraph-stream-parser[agui]>=0.6.17,<0.7"]
 
 [tool.hatch.version]
 source = "nodejs"
