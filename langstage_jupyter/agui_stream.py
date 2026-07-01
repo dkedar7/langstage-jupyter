@@ -6,16 +6,14 @@ the same chunk dicts the frontend already consumes from ``stream_graph_updates``
 — so the labextension is unchanged. Text, tool calls/results, and interrupts
 (display + resume via ``forwarded_props.command.resume``) are all supported.
 
-NOTE: this mapping is intentionally identical to ``langstage_cli.agui_stream``.
-When a third surface (vscode/web) adopts it, hoist the shared mapping into the
-core's ``langgraph_stream_parser.agui`` module and drop the copies.
+NOTE: the AG-UI->chunk-dict mapping now lives in the core
+(``langgraph_stream_parser.agui.iter_chunk_frames``, 0.6.17) and is shared with
+langstage-cli; this module keeps only the thin session/pump wrappers.
 
 Requires the ``agui`` extra::
 
     pip install "langstage-jupyter[agui]"
 """
-import json
-import uuid
 from typing import Any, AsyncIterator, Dict
 
 _IMPORT_HINT = 'the AG-UI path needs the agui extra: pip install "langstage-jupyter[agui]"'
@@ -50,60 +48,14 @@ async def agui_stream_updates(
 
     ``resume`` (a decision answering an interrupt) is delivered as
     ``forwarded_props.command.resume`` -> LangGraph ``Command(resume=...)``.
+
+    The mapping itself lives in the core (``agui.iter_chunk_frames``, 0.6.17) —
+    shared with langstage-cli — so a rendering fix lands once.
     """
-    from ag_ui.core.types import RunAgentInput, UserMessage
+    from langgraph_stream_parser.agui import iter_chunk_frames
 
-    forwarded_props: Dict[str, Any] = {}
-    if resume is not None:
-        forwarded_props = {"command": {"resume": resume}}
-
-    run_input = RunAgentInput(
-        thread_id=thread_id,
-        run_id=str(uuid.uuid4()),
-        state={},
-        messages=[UserMessage(id=str(uuid.uuid4()), role="user", content=message)],
-        tools=[],
-        context=[],
-        forwarded_props=forwarded_props,
-    )
-
-    streamed_text = False
-    tool_buf: Dict[str, Dict[str, str]] = {}
-
-    async for ev in agent.run(run_input):
-        t = type(ev).__name__
-        if t == "TextMessageContentEvent":
-            streamed_text = True
-            yield {"status": "streaming", "chunk": ev.delta, "node": "agent"}
-        elif t == "ToolCallStartEvent":
-            tool_buf[ev.tool_call_id] = {"name": ev.tool_call_name, "args": ""}
-        elif t == "ToolCallArgsEvent":
-            tool_buf.setdefault(ev.tool_call_id, {"name": "tool", "args": ""})["args"] += ev.delta
-        elif t == "ToolCallEndEvent":
-            tc = tool_buf.pop(ev.tool_call_id, {"name": "tool", "args": ""})
-            try:
-                args = json.loads(tc["args"]) if tc["args"] else {}
-            except json.JSONDecodeError:
-                args = {"_raw": tc["args"]}
-            yield {"status": "streaming", "tool_calls": [{"name": tc["name"], "args": args}]}
-        elif t == "ToolCallResultEvent":
-            yield {"status": "streaming", "tool_result": getattr(ev, "content", "")}
-        elif t == "CustomEvent" and getattr(ev, "name", None) == "on_interrupt":
-            payload = getattr(ev, "value", None)
-            if isinstance(payload, str):
-                try:
-                    payload = json.loads(payload)
-                except json.JSONDecodeError:
-                    payload = {"action_requests": []}
-            yield {"status": "interrupt", "interrupt": payload or {"action_requests": []}}
-        elif t == "MessagesSnapshotEvent" and not streamed_text:
-            for m in ev.messages:
-                if getattr(m, "role", None) == "assistant" and getattr(m, "content", None):
-                    yield {"status": "streaming", "chunk": m.content, "node": "agent"}
-        elif t == "RunErrorEvent":
-            yield {"status": "error", "error": getattr(ev, "message", "unknown error")}
-
-    yield {"status": "complete"}
+    async for frame in iter_chunk_frames(agent, message, thread_id, resume=resume):
+        yield frame
 
 
 def stream_updates_sync(agent: Any, message: str, thread_id: str, resume: Any = None):
