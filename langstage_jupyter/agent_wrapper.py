@@ -15,8 +15,10 @@ from dotenv import find_dotenv, load_dotenv
 # (gh #32)
 load_dotenv(find_dotenv(usecwd=True))
 
-# Import configuration
+# Import configuration. Also aliased as `config_module` for use inside methods
+# whose `config` parameter shadows the module name (e.g. execute()).
 from . import config
+from . import config as config_module
 from langgraph_stream_parser import (
     stream_graph_updates,
     prepare_agent_input,
@@ -84,6 +86,8 @@ class AgentWrapper:
         was requested, falls back from ``agent`` to ``graph`` — preserving the
         extension's historical default-name behavior.
         """
+        # Invalidate any cached AG-UI wrapper so it rebuilds around the fresh graph.
+        self._agui_agent = None
         var = self.agent_variable_name or "agent"
         try:
             self.agent = load_agent_spec(f"{self.agent_module_path}:{var}")
@@ -289,6 +293,39 @@ class AgentWrapper:
         if thread_id:
             agent_config["configurable"] = agent_config.get("configurable", {})
             agent_config["configurable"]["thread_id"] = thread_id
+
+        # Experimental (ADR 0002): route streaming through the in-process AG-UI
+        # adapter instead of the built-in event parser, yielding the SAME chunk
+        # shape the frontend already consumes. Opt-in via LANGSTAGE_JUPYTER_AGUI.
+        if config_module.AGUI:
+            from .agui_stream import build_session_agent, stream_updates_sync
+
+            try:
+                if self._agui_agent is None:
+                    self._agui_agent = build_session_agent(self.agent)
+            except RuntimeError as e:
+                yield {"error": str(e), "status": "error"}
+                return
+
+            tid = "jupyter"
+            if isinstance(agent_config, dict):
+                tid = agent_config.get("configurable", {}).get("thread_id", "jupyter")
+
+            if message is not None:
+                agui_msg = self._append_context_to_message(message, context)
+                resume = None
+            elif decisions is not None:
+                agui_msg, resume = "", {"decisions": decisions}
+            else:
+                yield {"error": "Must provide either 'message' or 'decisions'", "status": "error"}
+                return
+
+            try:
+                for chunk in stream_updates_sync(self._agui_agent, agui_msg, tid, resume=resume):
+                    yield chunk
+            except Exception as e:
+                yield {"error": f"Error executing agent: {str(e)}", "status": "error"}
+            return
 
         try:
             # Handle message input
