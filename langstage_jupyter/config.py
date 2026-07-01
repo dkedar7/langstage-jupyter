@@ -99,3 +99,8 @@ VIRTUAL_MODE = _cfg.virtual_mode
 # jupyter.execute_timeout in langstage.toml both apply (the old get_config()
 # read only DEEPAGENT_EXECUTE_TIMEOUT). agent.py reads this constant.
 EXECUTE_TIMEOUT = _cfg.execute_timeout
+# [experimental] Route streaming through the in-process AG-UI adapter instead of
+# the built-in event parser (ADR 0002, cli-first pattern). Opt-in via
+# LANGSTAGE_JUPYTER_AGUI=1 (or legacy DEEPAGENT_JUPYTER_AGUI). Requires the agui
+# extra: pip install "langstage-jupyter[agui]".
+AGUI = get_config("JUPYTER_AGUI", False, _to_bool)

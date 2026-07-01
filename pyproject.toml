@@ -59,6 +59,10 @@ dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
     "pytest-asyncio>=0.21.0",
+    # The experimental AG-UI path (ADR 0002); pulled into dev so CI exercises
+    # tests/test_agui_stream.py instead of skipping it.
+    "ag-ui-langgraph>=0.0.41",
+    "fastapi",
 ]
 agui = ["langgraph-stream-parser[agui]>=0.6.11,<0.7"]
 
