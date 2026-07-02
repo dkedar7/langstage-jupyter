@@ -3,7 +3,8 @@
 #23 — the shipped default agent name had a space ("Default Agent"), which leaks
 into the LLM message `name` field and 400s on OpenAI-compatible providers on the
 second turn. The default must be provider-safe; the upstream factory also
-slugifies as a backstop (langgraph-stream-parser>=0.6.3).
+slugifies as a backstop (shipped in langgraph-stream-parser 0.6.3, retained in
+its rename langstage-core >=1.0).
 
 #24 — `pip install langstage-jupyter` didn't pull in JupyterLab (it was only a
 build dep), so the headline launcher (`jupyter lab`) failed on a fresh install,
@@ -36,7 +37,7 @@ def _shipped_default_agent_name() -> str:
 
 def test_default_agent_name_is_provider_safe():
     """#23: shipped default name must not contain spaces or <|\\/> (OpenAI 400)."""
-    from langgraph_stream_parser.demo.agent import _safe_agent_name
+    from langstage_core.demo.agent import _safe_agent_name
 
     name = _shipped_default_agent_name()
     assert " " not in name, f"default agent name {name!r} contains a space"
@@ -45,18 +46,20 @@ def test_default_agent_name_is_provider_safe():
 
 
 def test_core_floor_carries_slugify_fix():
-    """#23: the core dep floor must be >=0.6.3 (where the slugify fix landed).
+    """#23: the core dep floor must carry the slugify fix.
 
-    Parse the lower bound rather than substring-match a literal, so routine
-    floor bumps (e.g. >=0.6.11 for describe(omit_keys)) don't trip this guard.
+    The fix shipped in langgraph-stream-parser 0.6.3 and is retained in its
+    rename, langstage-core (>=1.0, ADR 0003). Parse the lower bound rather than
+    substring-match a literal, so routine floor bumps don't trip this guard.
     """
     import re
 
     deps = _PYPROJECT["project"]["dependencies"]
-    core = next(d for d in deps if d.lower().startswith("langgraph-stream-parser"))
-    m = re.search(r">=\s*(\d+)\.(\d+)\.(\d+)", core)
+    core = next(d for d in deps if d.lower().startswith("langstage-core"))
+    m = re.search(r">=\s*(\d+)\.(\d+)(?:\.(\d+))?", core)
     assert m, core
-    assert tuple(int(g) for g in m.groups()) >= (0, 6, 3), core
+    floor = (int(m.group(1)), int(m.group(2)), int(m.group(3) or 0))
+    assert floor >= (1, 0, 0), core
 
 
 def test_jupyterlab_is_a_declared_runtime_dependency():

@@ -1,6 +1,8 @@
-"""Tests for the experimental in-process AG-UI streaming path (ADR 0002).
+"""Tests for the in-process AG-UI streaming path — the wrapper's only path since
+core 1.0 (ADR 0003).
 
-Skipped unless the agui extra is installed. The dev extra pulls it so CI runs these.
+Guarded by importorskip as a safety net, but base deps pull the AG-UI runtime
+(core's [agui] extra) so CI always runs these.
 """
 import asyncio
 
@@ -13,7 +15,7 @@ from langchain_core.messages import AIMessage  # noqa: E402
 from langgraph.checkpoint.memory import InMemorySaver  # noqa: E402
 from langgraph.graph import END, START, MessagesState, StateGraph  # noqa: E402
 from langgraph.types import interrupt  # noqa: E402
-from langgraph_stream_parser import load_agent_spec  # noqa: E402
+from langstage_core import load_agent_spec  # noqa: E402
 
 from langstage_jupyter import agent_wrapper as aw  # noqa: E402
 from langstage_jupyter.agui_stream import (  # noqa: E402
@@ -31,7 +33,7 @@ def _collect(agent, msg, resume=None):
 
 
 def test_text_parity_on_demo_stub():
-    agent = build_session_agent(load_agent_spec("langgraph_stream_parser.demo.stub:graph"))
+    agent = build_session_agent(load_agent_spec("langstage_core.demo.stub:graph"))
     chunks = _collect(agent, "hello jupyter agui")
     text = "".join(c["chunk"] for c in chunks if "chunk" in c)
     assert "hello jupyter agui" in text
@@ -40,7 +42,7 @@ def test_text_parity_on_demo_stub():
 
 def test_sync_bridge_yields_chunks():
     """stream_updates_sync pumps the async generator in a plain (sync) context."""
-    agent = build_session_agent(load_agent_spec("langgraph_stream_parser.demo.stub:graph"))
+    agent = build_session_agent(load_agent_spec("langstage_core.demo.stub:graph"))
     chunks = list(stream_updates_sync(agent, "sync bridge", "t"))
     # tokens stream across chunks, so join before checking (like the other tests)
     assert "sync bridge" in "".join(c.get("chunk", "") for c in chunks)
@@ -68,11 +70,10 @@ def test_interrupt_display_and_resume():
     assert "resolved:" in "".join(c["chunk"] for c in c2 if "chunk" in c)
 
 
-def test_wrapper_routes_through_agui(monkeypatch):
-    """AgentWrapper.execute() streams via AG-UI when the toggle is on."""
-    monkeypatch.setattr(aw.config_module, "AGUI", True)
+def test_wrapper_routes_through_agui():
+    """AgentWrapper.execute() streams via the in-process AG-UI adapter (its only path)."""
     w = aw.AgentWrapper.__new__(aw.AgentWrapper)  # bypass __init__ (no agent to load)
-    w.agent = load_agent_spec("langgraph_stream_parser.demo.stub:graph")
+    w.agent = load_agent_spec("langstage_core.demo.stub:graph")
     w._agui_agent = None
 
     chunks = list(w.execute(message="via wrapper", thread_id="w1"))

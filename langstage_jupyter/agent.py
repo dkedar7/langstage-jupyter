@@ -16,7 +16,7 @@ from dotenv import find_dotenv, load_dotenv
 # finds the user's project .env. (gh #32)
 load_dotenv(find_dotenv(usecwd=True))
 
-from langgraph_stream_parser.demo import create_default_agent as _build_default_agent
+from langstage_core.demo import create_default_agent as _build_default_agent
 from langchain.chat_models import init_chat_model
 
 # Import configuration

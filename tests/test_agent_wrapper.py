@@ -214,9 +214,9 @@ class TestExecuteMethod:
         assert any('Must provide' in str(r.get('error', '')) for r in results)
 
     @patch('langstage_jupyter.agent_wrapper.AgentWrapper._load_agent')
-    @patch('langstage_jupyter.agent_wrapper.stream_graph_updates')
+    @patch('langstage_jupyter.agui_stream.stream_updates_sync')
     def test_executes_with_message(self, mock_stream, mock_load):
-        """Should execute agent with message."""
+        """Should execute agent with message through the AG-UI adapter."""
         mock_stream.return_value = iter([
             {"chunk": "Hello", "status": "streaming"},
             {"status": "complete"}
@@ -224,6 +224,7 @@ class TestExecuteMethod:
 
         wrapper = AgentWrapper()
         wrapper.agent = Mock()
+        wrapper._agui_agent = Mock()  # pre-built, so execute() skips build_session_agent
 
         results = list(wrapper.execute(message="Test message"))
 
@@ -232,39 +233,36 @@ class TestExecuteMethod:
         assert results[1]['status'] == "complete"
 
     @patch('langstage_jupyter.agent_wrapper.AgentWrapper._load_agent')
-    @patch('langstage_jupyter.agent_wrapper.stream_graph_updates')
+    @patch('langstage_jupyter.agui_stream.stream_updates_sync')
     def test_adds_thread_id_to_config(self, mock_stream, mock_load):
-        """Should add thread_id to config when provided."""
+        """Should pass thread_id through as the AG-UI turn's thread id."""
         mock_stream.return_value = iter([{"status": "complete"}])
 
         wrapper = AgentWrapper()
         wrapper.agent = Mock()
+        wrapper._agui_agent = Mock()
 
         list(wrapper.execute(message="Test", thread_id="thread_123"))
 
-        # Verify stream_graph_updates was called with config containing thread_id
-        # The function is called as: stream_graph_updates(agent, input, config=config)
+        # stream_updates_sync(agent, message, thread_id, resume=...)
         mock_stream.assert_called_once()
-        call_kwargs = mock_stream.call_args.kwargs
-        config = call_kwargs['config']
-        assert config['configurable']['thread_id'] == "thread_123"
+        assert mock_stream.call_args.args[2] == "thread_123"
 
     @patch('langstage_jupyter.agent_wrapper.AgentWrapper._load_agent')
-    @patch('langstage_jupyter.agent_wrapper.stream_graph_updates')
+    @patch('langstage_jupyter.agui_stream.stream_updates_sync')
     def test_appends_context_to_message(self, mock_stream, mock_load):
-        """Should append context to message before execution."""
+        """Should append context to the message before streaming."""
         mock_stream.return_value = iter([{"status": "complete"}])
 
         wrapper = AgentWrapper()
         wrapper.agent = Mock()
+        wrapper._agui_agent = Mock()
 
         context = {"current_directory": "/home/user"}
         list(wrapper.execute(message="Test", context=context))
 
-        # Verify prepare_agent_input was called with context-enhanced message
-        call_args = mock_stream.call_args
-        agent_input = call_args[0][1]  # Second argument is agent_input
-        assert "/home/user" in str(agent_input)
+        # stream_updates_sync(agent, message, thread_id, ...) — message is 2nd positional
+        assert "/home/user" in str(mock_stream.call_args.args[1])
 
 
 class TestAgentNameExtraction:

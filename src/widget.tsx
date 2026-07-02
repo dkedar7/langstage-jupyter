@@ -271,6 +271,9 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
     const assistantMessageId = (Date.now() + 1).toString();
     let intermediateMessages: string[] = [];
     let finalContent = '';
+    // The node whose text run we're currently accumulating; AG-UI streams token
+    // deltas, so consecutive same-node text chunks are one message (appended).
+    let currentTextNode: string | undefined;
     let toolCalls: ToolCall[] = [];
     let todoList: TodoItem[] = [];
 
@@ -322,6 +325,9 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
                   data.tool_calls.forEach((tc: ToolCall) => {
                     toolCalls.push({ ...tc });
                   });
+                  // A tool break ends the current text run, so text after it
+                  // starts a new intermediate message.
+                  currentTextNode = undefined;
                 }
 
                 // Handle todo list updates
@@ -329,11 +335,20 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
                   todoList = data.todo_list;
                 }
 
-                // Handle regular content
+                // Handle regular content. AG-UI streams token DELTAS (not
+                // cumulative per-message chunks), so accumulate consecutive
+                // same-node deltas into one intermediate — a normal reply then
+                // renders as a single clean block, while a node/tool break starts
+                // a new intermediate (preserving the grey multi-step display).
                 if (data.chunk) {
-                  intermediateMessages.push(data.chunk);
-                  finalContent = data.chunk; // Keep updating final content
-                  console.log('Updated content:', finalContent, 'Intermediates:', intermediateMessages.length)
+                  const node = data.node ?? '';
+                  if (currentTextNode === node && intermediateMessages.length > 0) {
+                    intermediateMessages[intermediateMessages.length - 1] += data.chunk;
+                  } else {
+                    intermediateMessages.push(data.chunk);
+                    currentTextNode = node;
+                  }
+                  finalContent = intermediateMessages[intermediateMessages.length - 1];
                 }
 
                 // Update the message in place
@@ -482,6 +497,7 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
       const assistantMessageId = (Date.now() + 1).toString();
       let intermediateMessages: string[] = [];
       let finalContent = '';
+      let currentTextNode: string | undefined;
       let toolCalls: ToolCall[] = [];
       let todoList: TodoItem[] = [];
 
@@ -503,15 +519,23 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
                   data.tool_calls.forEach((tc: ToolCall) => {
                     toolCalls.push({ ...tc });
                   });
+                  currentTextNode = undefined;
                 }
 
                 if (data.todo_list) {
                   todoList = data.todo_list;
                 }
 
+                // Accumulate AG-UI token deltas per node (see the send path above).
                 if (data.chunk) {
-                  intermediateMessages.push(data.chunk);
-                  finalContent = data.chunk;
+                  const node = data.node ?? '';
+                  if (currentTextNode === node && intermediateMessages.length > 0) {
+                    intermediateMessages[intermediateMessages.length - 1] += data.chunk;
+                  } else {
+                    intermediateMessages.push(data.chunk);
+                    currentTextNode = node;
+                  }
+                  finalContent = intermediateMessages[intermediateMessages.length - 1];
                 }
 
                 setMessages(prev => {

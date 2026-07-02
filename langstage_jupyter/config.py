@@ -1,7 +1,7 @@
 """Configuration management for langstage-jupyter.
 
 Shares the ``DEEPAGENT_*`` schema + TOML loader with the deep-agent family via
-``langgraph_stream_parser.host``. ``LabConfig`` is the full resolved config
+``langstage_core.host``. ``LabConfig`` is the full resolved config
 (``defaults < deepagents.toml < DEEPAGENT_* env < overrides``) used by the
 launcher and `--show-config`. The module-level constants below are an
 env+defaults view (no TOML) kept for back-compat with existing call sites
@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, ClassVar, Optional
 
-from langgraph_stream_parser.host import HostConfig, load_toml_config  # noqa: F401  (re-exported for callers)
+from langstage_core.host import HostConfig, load_toml_config  # noqa: F401  (re-exported for callers)
 
 
 def get_config(key: str, default: Any = None, type_cast: Optional[Callable] = None) -> Any:
@@ -99,8 +99,3 @@ VIRTUAL_MODE = _cfg.virtual_mode
 # jupyter.execute_timeout in langstage.toml both apply (the old get_config()
 # read only DEEPAGENT_EXECUTE_TIMEOUT). agent.py reads this constant.
 EXECUTE_TIMEOUT = _cfg.execute_timeout
-# [experimental] Route streaming through the in-process AG-UI adapter instead of
-# the built-in event parser (ADR 0002, cli-first pattern). Opt-in via
-# LANGSTAGE_JUPYTER_AGUI=1 (or legacy DEEPAGENT_JUPYTER_AGUI). Requires the agui
-# extra: pip install "langstage-jupyter[agui]".
-AGUI = get_config("JUPYTER_AGUI", False, _to_bool)

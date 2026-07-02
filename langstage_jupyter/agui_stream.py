@@ -1,18 +1,17 @@
-"""Experimental in-process AG-UI streaming path for the Jupyter sidebar.
+"""In-process AG-UI streaming path for the Jupyter sidebar — the wrapper's only
+streaming path since core 1.0 (ADR 0003).
 
-ADR 0002 (cli-first pattern, now jupyter): drive the agent through the official
-``ag-ui-langgraph`` adapter in-process (no web server) and map AG-UI events onto
-the same chunk dicts the frontend already consumes from ``stream_graph_updates``
-— so the labextension is unchanged. Text, tool calls/results, and interrupts
-(display + resume via ``forwarded_props.command.resume``) are all supported.
+Drives the agent through the official ``ag-ui-langgraph`` adapter in-process (no
+web server) and maps AG-UI events onto the ``chunk``-dict shape the React frontend
+consumes — so the labextension is unchanged. Text, tool calls/results, and
+interrupts (display + resume via ``forwarded_props.command.resume``) are all
+supported.
 
-NOTE: the AG-UI->chunk-dict mapping now lives in the core
-(``langgraph_stream_parser.agui.iter_chunk_frames``, 0.6.17) and is shared with
-langstage-cli; this module keeps only the thin session/pump wrappers.
-
-Requires the ``agui`` extra::
-
-    pip install "langstage-jupyter[agui]"
+NOTE: the AG-UI->chunk-dict mapping lives in the core
+(``langstage_core.agui.iter_chunk_frames``) and is shared with langstage-cli;
+this module keeps only the thin session/pump wrappers. The AG-UI runtime is a
+base dependency (core's ``[agui]`` extra), so ``ensure_agui_available`` is a
+belt-and-suspenders guard rather than an opt-in gate.
 """
 from typing import Any, AsyncIterator, Dict
 
@@ -23,7 +22,7 @@ def ensure_agui_available() -> None:
     """Raise a clean, actionable error if the AG-UI adapter isn't installed."""
     try:
         import ag_ui_langgraph  # noqa: F401
-        from langgraph_stream_parser.agui import build_agent  # noqa: F401
+        from langstage_core.agui import build_agent  # noqa: F401
     except ImportError as e:  # pragma: no cover - exercised only without the extra
         raise RuntimeError(_IMPORT_HINT) from e
 
@@ -32,7 +31,7 @@ def build_session_agent(graph: Any, *, name: str = "langstage-jupyter") -> Any:
     """Wrap a compiled graph once (checkpointer attached by the core bridge) so
     multi-turn memory persists; thread_id is passed per run for per-chat state."""
     ensure_agui_available()
-    from langgraph_stream_parser.agui import build_agent
+    from langstage_core.agui import build_agent
 
     return build_agent(graph, name=name)
 
@@ -40,7 +39,7 @@ def build_session_agent(graph: Any, *, name: str = "langstage-jupyter") -> Any:
 async def agui_stream_updates(
     agent: Any, message: str, thread_id: str, resume: Any = None
 ) -> AsyncIterator[Dict[str, Any]]:
-    """Drive ``agent.run()`` in-process and yield ``stream_graph_updates``-shaped chunks.
+    """Drive ``agent.run()`` in-process and yield ``chunk``-dict updates.
 
     Maps: TextMessageContent -> text; ToolCall{Start,Args,End} -> tool_calls;
     ToolCallResult -> tool_result; CustomEvent(on_interrupt) -> interrupt;
@@ -52,7 +51,7 @@ async def agui_stream_updates(
     The mapping itself lives in the core (``agui.iter_chunk_frames``, 0.6.17) —
     shared with langstage-cli — so a rendering fix lands once.
     """
-    from langgraph_stream_parser.agui import iter_chunk_frames
+    from langstage_core.agui import iter_chunk_frames
 
     async for frame in iter_chunk_frames(agent, message, thread_id, resume=resume):
         yield frame
