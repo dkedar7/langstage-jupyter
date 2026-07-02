@@ -5,7 +5,7 @@ Point the extension at it with::
     DEEPAGENT_AGENT_SPEC=<abs path>/stub_agent.py:graph
 
 It's a real compiled LangGraph graph (so it streams through the exact same
-``langgraph_stream_parser`` path the production agent uses, including
+``langstage_core`` path the production agent uses, including
 token-by-token ``messages``-mode streaming) but the "model" is a local echo that
 replays the user's last message — no API key, fully deterministic.
 """

@@ -43,7 +43,9 @@ jobs:
         # JupyterLab is now a declared runtime dep (gh #24); install it so the
         # launcher guard test exercises the real "present" path.
         pip install "jupyterlab>=4.0,<5"
-        pip install "langgraph-stream-parser>=0.6.3,<0.7"
+        # AG-UI is the wrapper's only streaming path (core 1.0), so [agui] pulls
+        # ag-ui-langgraph[fastapi] + uvicorn — tests/test_agui_stream.py runs, not skips.
+        pip install "langstage-core[agui]>=1.0"
         pip install nbformat requests tornado traitlets jupyter_client
 
     - name: Add package to Python path

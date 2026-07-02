@@ -24,7 +24,7 @@ import secrets
 import subprocess
 
 # The keyless echo agent shipped with the shared core — see `--demo`.
-DEMO_AGENT_SPEC = "langgraph_stream_parser.demo.stub:graph"
+DEMO_AGENT_SPEC = "langstage_core.demo.stub:graph"
 
 _LAUNCHER_HELP = """\
 langstage-jupyter - launch JupyterLab with the LangStage chat sidebar.

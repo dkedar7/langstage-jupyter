@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.6.0 - 2026-07-02
+
+### Changed
+- **AG-UI is now the chat sidebar's only streaming path (ADR 0003).** The
+  built-in event-parser path (`stream_graph_updates`) is gone; `AgentWrapper.execute()`
+  always streams through `langstage-core`'s in-process AG-UI adapter, yielding the
+  **same** chunk shapes the React frontend already consumes — the UI is unchanged.
+  Removed the `LANGSTAGE_JUPYTER_AGUI` opt-in env and the `config.AGUI` toggle
+  (they gated a path that no longer exists).
+- **Repointed to `langstage-core` 1.0** (the rename of `langgraph-stream-parser`;
+  ADR 0003). The AG-UI runtime (`ag-ui-langgraph[fastapi]` + uvicorn, via core's
+  `[agui]` extra) moved into **base dependencies**: since AG-UI is the only path,
+  a bare `pip install langstage-jupyter` must be able to run a turn. The `[agui]`
+  extra is now a redundant no-op alias.
+
+### Removed
+- The `stream_graph_updates`/`prepare_agent_input` imports and the legacy turn
+  path in `execute()`; the `config.AGUI` flag and its env. Inputs are now validated
+  before the agent is built, so a bad call fails fast.
+
 ## 0.5.9 - 2026-06-27
 
 ### Fixed
