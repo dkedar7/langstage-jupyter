@@ -15,6 +15,16 @@
   a bare `pip install langstage-jupyter` must be able to run a turn. The `[agui]`
   extra is now a redundant no-op alias.
 
+### Fixed
+- **Chat replies rendered fragmented under AG-UI.** The frontend accumulated each
+  streamed chunk as a separate "intermediate" and overwrote content with the last
+  chunk — built for the old path's cumulative per-message chunks. AG-UI streams
+  token *deltas*, so a normal reply showed as many grey one-token fragments with
+  only the last token as the message body. The stream handler now accumulates
+  consecutive same-node deltas into one message (a node/tool break starts a new
+  intermediate), so a reply renders as one clean block again — matching the
+  pre-AG-UI rendering. (Surfaced by the Galata visual tests.)
+
 ### Removed
 - The `stream_graph_updates`/`prepare_agent_input` imports and the legacy turn
   path in `execute()`; the `config.AGUI` flag and its env. Inputs are now validated
