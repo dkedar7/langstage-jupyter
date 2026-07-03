@@ -99,3 +99,28 @@ def test_pinned_workspace_root_is_honored(monkeypatch, tmp_path):
 
 def test_resolve_root_normalizes():
     assert AgentWrapper._resolve_root(".") == str(Path(".").resolve())
+
+
+def test_set_root_dir_updates_workspace_source_of_truth(tmp_path):
+    # ADR 0005: after re-rooting, core.workspace_root() (which the rebuilt agent
+    # reads) reflects the live launch dir — one source of truth, not a private global.
+    from langstage_core import workspace_root
+
+    w = _wrapper(".", object())
+    w.reload_agent = lambda: None
+    w.set_root_dir(str(tmp_path))
+    assert workspace_root() == tmp_path.resolve()
+
+
+def test_pinned_root_is_the_source_of_truth(tmp_path):
+    # ADR 0005 + gh #45: a pinned root stays authoritative; the live JupyterLab dir
+    # does NOT override it.
+    from langstage_core import workspace_root
+
+    pinned = tmp_path / "pinned"
+    w = _wrapper(str(pinned), object())
+    w._workspace_pinned = True
+    w._pinned_root = str(pinned)
+    w.reload_agent = lambda: None
+    w.set_root_dir(str(tmp_path / "jupyter_launch_dir"))
+    assert workspace_root() == pinned.resolve()
