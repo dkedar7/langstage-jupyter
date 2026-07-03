@@ -151,21 +151,29 @@ class TestSetRootDir:
 
     @patch('langstage_jupyter.agent_wrapper.AgentWrapper._load_agent')
     @patch('os.environ', {})
-    def test_sets_environment_variable(self, mock_load):
-        """Should publish BOTH the canonical and legacy workspace-root env vars."""
+    def test_sets_environment_variable(self, mock_load, tmp_path):
+        """Should publish BOTH the canonical and legacy workspace-root env vars.
+
+        Since ADR 0005 the published value is the *resolved* absolute root (what
+        apply_workspace records as the source of truth), not the raw string. Uses a
+        real dir — apply_workspace ensures the root exists (in a real session it's
+        JupyterLab's live launch dir, which always exists).
+        """
         import os
+
         wrapper = AgentWrapper()
         wrapper.agent = Mock()
 
-        wrapper.set_root_dir("/home/user/workspace")
+        wrapper.set_root_dir(str(tmp_path))
+        expected = str(tmp_path.resolve())
 
         # Canonical name is what the README's custom-agent example reads.
-        assert os.environ['LANGSTAGE_WORKSPACE_ROOT'] == "/home/user/workspace"
+        assert os.environ['LANGSTAGE_WORKSPACE_ROOT'] == expected
         # Legacy name stays set for back-compat with anything still reading it.
-        assert os.environ['DEEPAGENT_WORKSPACE_ROOT'] == "/home/user/workspace"
+        assert os.environ['DEEPAGENT_WORKSPACE_ROOT'] == expected
 
     @patch('langstage_jupyter.agent_wrapper.AgentWrapper._load_agent')
-    def test_updates_agent_backend_if_available(self, mock_load):
+    def test_updates_agent_backend_if_available(self, mock_load, tmp_path):
         """Should update agent backend if it exists."""
         wrapper = AgentWrapper()
         mock_backend = Mock()
@@ -175,17 +183,17 @@ class TestSetRootDir:
 
         # Should not raise an error when agent has backend
         # FilesystemBackend update is optional and may fail if module not available
-        wrapper.set_root_dir("/new/root")
+        wrapper.set_root_dir(str(tmp_path / "new"))
 
     @patch('langstage_jupyter.agent_wrapper.AgentWrapper._load_agent')
-    def test_handles_agent_without_backend(self, mock_load):
+    def test_handles_agent_without_backend(self, mock_load, tmp_path):
         """Should handle agent without backend gracefully."""
         wrapper = AgentWrapper()
         mock_agent = Mock(spec=[])  # Agent without backend attribute
         wrapper.agent = mock_agent
 
         # Should not raise an error
-        wrapper.set_root_dir("/some/path")
+        wrapper.set_root_dir(str(tmp_path / "some"))
 
 
 class TestExecuteMethod:

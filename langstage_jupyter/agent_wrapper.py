@@ -17,7 +17,7 @@ load_dotenv(find_dotenv(usecwd=True))
 
 # Import configuration.
 from . import config
-from langstage_core import load_agent_spec
+from langstage_core import apply_workspace, load_agent_spec, workspace_root
 
 
 class AgentWrapper:
@@ -62,21 +62,24 @@ class AgentWrapper:
             self.agent_module_path = agent_module_path or config.AGENT_MODULE
             self.agent_variable_name = agent_variable_name or config.AGENT_VARIABLE
 
-        self._load_agent()
         # Whether the operator pinned an explicit workspace root — via
         # LANGSTAGE_WORKSPACE_ROOT / legacy DEEPAGENT_WORKSPACE_ROOT, or
         # workspace.root in langstage.toml. config.WORKSPACE_ROOT is None only when
         # the source is "default" (unset). If pinned, set_root_dir() must honor it
-        # rather than silently re-rooting to JupyterLab's launch dir. Captured here
-        # because set_root_dir() itself mutates config.WORKSPACE_ROOT. (gh #45)
+        # rather than silently re-rooting to JupyterLab's launch dir. (gh #45)
         self._workspace_pinned = config.WORKSPACE_ROOT is not None
         self._pinned_root = str(config.WORKSPACE_ROOT) if config.WORKSPACE_ROOT else None
-        # The root the agent's backend was just built from (config.WORKSPACE_ROOT,
-        # else cwd "."). set_root_dir() compares against this so it only rebuilds
-        # when JupyterLab's live root actually differs. (gh #36)
-        self._applied_root = self._resolve_root(
-            str(config.WORKSPACE_ROOT) if config.WORKSPACE_ROOT else "."
-        )
+        # Apply the pinned root as the shared source of truth (ADR 0005) BEFORE
+        # loading the agent, so the default agent module builds its FilesystemBackend
+        # rooted there via core.workspace_root(). Unpinned: leave it — set_root_dir()
+        # applies JupyterLab's live launch dir on the first message.
+        if self._workspace_pinned:
+            apply_workspace(self._pinned_root)
+        self._load_agent()
+        # The root the agent's backend was just built from. set_root_dir() compares
+        # against this so it only rebuilds when JupyterLab's live root actually
+        # differs. (gh #36)
+        self._applied_root = self._resolve_root(self._pinned_root or ".")
 
     def _load_agent(self):
         """Load the agent via the shared host loader.
@@ -154,25 +157,20 @@ class AgentWrapper:
         """
         # Honor an explicitly pinned workspace root (LANGSTAGE_WORKSPACE_ROOT /
         # workspace.root in langstage.toml) — don't silently re-root to JupyterLab's
-        # launch dir. The auto-follow below is only for the default (unpinned) case,
-        # where following the live JupyterLab dir is the convenience. Publish the
-        # pinned root for agents that read it at runtime (setdefault so an explicit
-        # env value the operator already set is never clobbered). (gh #45)
+        # launch dir. The auto-follow below is only for the default (unpinned) case.
+        # Re-apply the pinned root as the source of truth (idempotent; re-publishes
+        # the env + active workspace). (gh #45, ADR 0005)
         if getattr(self, "_workspace_pinned", False):
             pinned = getattr(self, "_pinned_root", None)
             if pinned:
-                os.environ.setdefault("LANGSTAGE_WORKSPACE_ROOT", pinned)
-                os.environ.setdefault("DEEPAGENT_WORKSPACE_ROOT", pinned)
+                apply_workspace(pinned)
             return
 
-        # Publish BOTH the canonical and the legacy env name. The README's own
-        # custom-agent example reads canonical `LANGSTAGE_WORKSPACE_ROOT`, so a
-        # user following the docs verbatim would otherwise see "." instead of
-        # the live JupyterLab root — the agent's read path was renamed (0.5.4)
-        # but this write path still published only the deprecated name.
-        # (gh #-dogfood)
-        os.environ['LANGSTAGE_WORKSPACE_ROOT'] = root_dir
-        os.environ['DEEPAGENT_WORKSPACE_ROOT'] = root_dir
+        # Unpinned: follow JupyterLab's live launch dir. apply_workspace publishes it
+        # as the shared source of truth — the canonical + legacy env vars (the
+        # README's custom-agent example reads canonical LANGSTAGE_WORKSPACE_ROOT) and
+        # the active workspace core.workspace_root() the rebuilt agent reads. (ADR 0005)
+        apply_workspace(root_dir)
 
         # Re-root only on an actual change — set_root_dir runs on every message,
         # and rebuilding each time would be wasteful and reset agent state.
@@ -188,11 +186,14 @@ class AgentWrapper:
         if self.agent is not None and hasattr(self.agent, 'backend'):
             try:
                 from deepagents.backends import FilesystemBackend
+                # Root at the shared source of truth (the resolved root apply_workspace
+                # just published), so the backend, env, and workspace_root() agree.
+                applied = str(workspace_root())
                 self.agent.backend = FilesystemBackend(
-                    root_dir=root_dir,
+                    root_dir=applied,
                     virtual_mode=config.VIRTUAL_MODE,
                 )
-                print(f"Set agent backend root_dir to: {root_dir}")
+                print(f"Set agent backend root_dir to: {applied}")
                 return
             except ImportError:
                 pass
@@ -200,13 +201,12 @@ class AgentWrapper:
                 print(f"Warning: Could not set agent backend root_dir: {e}")
 
         # General path (the bundled default and `create_deep_agent` agents): their
-        # FilesystemBackend is built from `config.WORKSPACE_ROOT` at import time, so
-        # refresh that resolved value and rebuild the agent — its backend then
-        # re-roots at the live directory. Previously this branch was dead (wrong
-        # import + a guard that's never true for a CompiledStateGraph), so the
-        # documented re-root never happened. (gh #36)
+        # FilesystemBackend is built from `core.workspace_root()` at import time, so
+        # rebuild the agent — apply_workspace() above already updated the active
+        # workspace, so the reloaded agent module re-roots at the live directory.
+        # Previously this branch was dead (wrong import + a guard that's never true
+        # for a CompiledStateGraph), so the documented re-root never happened. (gh #36)
         try:
-            config.WORKSPACE_ROOT = Path(resolved)
             self.reload_agent()
             print(f"Re-rooted agent filesystem to: {root_dir}")
         except Exception as e:

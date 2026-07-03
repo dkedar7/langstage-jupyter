@@ -16,6 +16,7 @@ from dotenv import find_dotenv, load_dotenv
 # finds the user's project .env. (gh #32)
 load_dotenv(find_dotenv(usecwd=True))
 
+from langstage_core import workspace_root
 from langstage_core.demo import create_default_agent as _build_default_agent
 from langchain.chat_models import init_chat_model
 
@@ -32,15 +33,12 @@ kernel_clients = {}
 
 # === Configuration ===
 
-# Workspace root comes from the resolved config (config.WORKSPACE_ROOT honors
-# canonical LANGSTAGE_WORKSPACE_ROOT, legacy DEEPAGENT_WORKSPACE_ROOT, and
-# langstage.toml with the correct precedence). Reading DEEPAGENT_WORKSPACE_ROOT
-# directly here used to override the canonical name — precedence inversion fixed
-# by deferring to config (gh #-dogfood).
-if config.WORKSPACE_ROOT:
-    WORKSPACE = config.WORKSPACE_ROOT
-else:
-    WORKSPACE = Path(".")
+# Workspace root comes from the shared source of truth (ADR 0005). The agent
+# wrapper calls core.apply_workspace() with the resolved root (pinned config root,
+# else JupyterLab's live launch dir) BEFORE this module builds/rebuilds the agent,
+# so workspace_root() here is authoritative — and honors canonical
+# LANGSTAGE_WORKSPACE_ROOT / legacy / langstage.toml with the correct precedence.
+WORKSPACE = workspace_root()
 
 # Get Jupyter server configuration
 JUPYTER_SERVER_URL = config.JUPYTER_SERVER_URL

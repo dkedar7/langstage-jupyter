@@ -1,6 +1,20 @@
 # Changelog
 
-## 0.6.3 - 2026-07-03
+## 0.6.4 - 2026-07-03
+
+### Changed
+- **Workspace root now flows through the shared `core.apply_workspace()` /
+  `core.workspace_root()` source of truth (ADR 0005).** The extension used to apply
+  the workspace via a bespoke dance — a mutable `config.WORKSPACE_ROOT` global,
+  manual `os.environ` writes, and `set_root_dir()` mutating that global to re-root —
+  which drifted into #45 (pinned root discarded) and #36 (dead re-root). Now
+  `agent_wrapper` calls `apply_workspace()` (pinned root at init, else JupyterLab's
+  live launch dir on each message) and the default agent reads `workspace_root()` —
+  one source the env, the backend, and the rebuilt agent all agree on. Behavior is
+  preserved (pinned still wins over the launch dir; re-root still happens on an
+  actual change); the published env value is now the *resolved* absolute root.
+  Requires `langstage-core>=1.0.7`.
+
 
 ### Added
 - **`langstage-jupyter --verify`: preflight the agent with one real turn (ADR 0004).**

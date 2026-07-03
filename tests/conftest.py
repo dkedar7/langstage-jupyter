@@ -9,21 +9,30 @@ from unittest.mock import Mock
 
 @pytest.fixture(autouse=True)
 def _restore_workspace_root():
-    """Snapshot + restore the module-level ``config.WORKSPACE_ROOT`` around each test.
+    """Snapshot + restore the process-global workspace state around each test.
 
-    ``set_root_dir()`` mutates this global (gh #36) to re-root the agent. In a real
-    session that's a fresh process, but under pytest the module persists, so the
-    mutation would leak into the next test — and trip the gh #45 pinned-workspace
-    detection, which reads ``config.WORKSPACE_ROOT`` at wrapper init. Restoring it
-    per test keeps isolation.
+    Two globals persist across tests under pytest (a real session is a fresh
+    process): ``config.WORKSPACE_ROOT`` (read at wrapper init for the gh #45 pinned
+    detection) and, since ADR 0005, ``langstage_core``'s active workspace + the
+    ``LANGSTAGE_WORKSPACE_ROOT`` / ``DEEPAGENT_WORKSPACE_ROOT`` env vars that
+    ``apply_workspace()`` publishes. Restoring all of them per test keeps isolation.
     """
     import langstage_jupyter.config as _cfg
+    from langstage_core.host import workspace as _ws
 
-    saved = _cfg.WORKSPACE_ROOT
+    saved_root = _cfg.WORKSPACE_ROOT
+    saved_active = _ws._ACTIVE
+    saved_env = {k: os.environ.get(k) for k in ("LANGSTAGE_WORKSPACE_ROOT", "DEEPAGENT_WORKSPACE_ROOT")}
     try:
         yield
     finally:
-        _cfg.WORKSPACE_ROOT = saved
+        _cfg.WORKSPACE_ROOT = saved_root
+        _ws._ACTIVE = saved_active
+        for k, v in saved_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
 
 
 @pytest.fixture
