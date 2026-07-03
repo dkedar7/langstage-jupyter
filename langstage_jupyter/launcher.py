@@ -36,6 +36,7 @@ Launcher options:
   -a, --agent SPEC   Agent to load (module:attr or path/to/file.py:attr).
   --demo             Use the built-in keyless demo agent (no API key).
   --show-config      Print the resolved configuration and exit.
+  --verify           Preflight the agent (run one real turn); exit 0/1. Then exit.
   --version, -V      Print the langstage-jupyter version and exit.
   -h, --help         Show this message and exit.
 
@@ -170,6 +171,37 @@ def main():
             )
         )
         return
+
+    # --verify: preflight the agent the extension WOULD run — resolve the spec the
+    # same way, load it, and run ONE real turn through the shared langstage-core
+    # primitive; exit 0 if it completed cleanly, non-zero otherwise. The extension's
+    # /health only checks the agent object is non-None; this proves it can actually
+    # complete a turn (a bad key / broken tool / bad graph fails here, not at first
+    # chat). Uses --demo for a keyless check. (ADR 0004)
+    if "--verify" in args:
+        from langstage_core.agui import verify as _core_verify
+        from langstage_jupyter.config import LabConfig
+
+        spec = str(LabConfig.resolve().agent_spec or "").strip()
+        try:
+            if spec:
+                from langstage_core import load_agent_spec
+
+                graph = load_agent_spec(spec)
+            else:
+                # No explicit spec -> the bundled default agent (same object the
+                # extension builds at import).
+                from langstage_jupyter.agent import agent as graph
+        except Exception as e:  # noqa: BLE001 - report a load failure cleanly
+            print(f"[fail] could not load agent: {e}")
+            sys.exit(1)
+
+        result = _core_verify(graph)
+        if result.ok:
+            print(f"[ ok ] agent verified: {result.reason}")
+            sys.exit(0)
+        print(f"[fail] agent verification failed: {result.reason}")
+        sys.exit(1)
 
     if agent_spec:
         print(f"Agent spec: {agent_spec}")

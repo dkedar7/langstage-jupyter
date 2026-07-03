@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.3 - 2026-07-03
+
+### Added
+- **`langstage-jupyter --verify`: preflight the agent with one real turn (ADR 0004).**
+  The extension previously had no real readiness check — the `/health` endpoint only
+  reports whether the agent object is non-None. `--verify` resolves the same spec the
+  extension would run, loads it, and runs ONE real turn through the shared
+  `langstage-core` primitive `core.verify()`, exiting **0** if it completed cleanly /
+  **non-zero** otherwise (use `--demo` for a keyless check). Catches a missing key /
+  broken tool / bad graph before you launch. Requires `langstage-core>=1.0.6`.
+
 ## 0.6.2 - 2026-07-03
 
 ### Fixed

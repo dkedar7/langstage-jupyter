@@ -98,6 +98,11 @@ class TestLauncherHelpAndShowConfig:
         out = capsys.readouterr().out
         assert "foo.py:graph" in out  # not agent_spec=None
 
+    def test_help_lists_verify_flag(self, monkeypatch, capsys):
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", "--help"])
+        main()
+        assert "--verify" in capsys.readouterr().out
+
     def test_show_config_omits_inert_host_port(self, monkeypatch, capsys):
         # The launcher never honors LANGSTAGE_HOST/PORT (JupyterLab uses --port /
         # auto-detect and binds localhost), so --show-config must not advertise
@@ -284,3 +289,36 @@ class TestPortHandling:
     def test_no_port_auto_injects_one(self, monkeypatch):
         calls = self._run_main(["--no-browser"], monkeypatch)
         assert calls["cmd"].count("--port") == 1  # exactly one, auto-detected
+
+
+class TestVerifyFlag:
+    """--verify preflights the agent with one real turn via core.verify (ADR 0004)."""
+
+    def test_verify_demo_passes_exit_zero(self, monkeypatch, capsys):
+        monkeypatch.setenv("LANGSTAGE_AGENT_SPEC", "")
+        monkeypatch.setenv("DEEPAGENT_AGENT_SPEC", "")
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", "--demo", "--verify"])
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 0
+        assert "agent verified" in capsys.readouterr().out
+
+    def test_verify_broken_agent_fails_exit_one(self, monkeypatch, capsys, tmp_path):
+        agent = tmp_path / "broken.py"
+        agent.write_text(
+            "from langgraph.graph import StateGraph, START, END, MessagesState\n"
+            "def boom(s):\n"
+            "    raise RuntimeError('tool exploded')\n"
+            "b = StateGraph(MessagesState)\n"
+            "b.add_node('boom', boom)\n"
+            "b.add_edge(START, 'boom')\n"
+            "b.add_edge('boom', END)\n"
+            "graph = b.compile()\n"
+        )
+        monkeypatch.setenv("LANGSTAGE_AGENT_SPEC", "")
+        monkeypatch.setenv("DEEPAGENT_AGENT_SPEC", "")
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", "-a", f"{agent}:graph", "--verify"])
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 1
+        assert "verification failed" in capsys.readouterr().out
