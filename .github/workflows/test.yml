@@ -100,3 +100,26 @@ jobs:
           /tmp/mi/bin/pip install .
           /tmp/mi/bin/python -c "import langstage_jupyter; print('ok')"
           /tmp/mi/bin/python -c "import langstage_jupyter.config, langstage_jupyter.agent_wrapper, langstage_jupyter.handlers, langstage_jupyter.agent, langstage_jupyter.launcher; print('ok')"
+
+  # gh #38/#48 guard: the built wheel must bundle a labextension whose version
+  # matches the wheel. The drift (skip-if-exists reusing a stale JS bundle) shipped
+  # a mislabelled labextension twice. This builds a release wheel and asserts parity;
+  # scripts/check_labext_version.py is the same check the release runs before publish.
+  labext-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Build a release wheel (fresh labextension)
+        run: |
+          python -m pip install --upgrade pip build "jupyterlab>=4.0,<5"
+          jlpm install --no-immutable
+          jlpm build:prod
+          python -m build --wheel
+      - name: Assert bundled labextension version == wheel version
+        run: python scripts/check_labext_version.py
