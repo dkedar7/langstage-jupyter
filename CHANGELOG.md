@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.1 - 2026-07-02
+
+### Fixed
+- **An explicit workspace root was silently discarded (gh #45).** `set_root_dir`
+  runs on every chat message and re-rooted the agent (and overwrote
+  `LANGSTAGE_WORKSPACE_ROOT`) to JupyterLab's launch dir — clobbering a workspace
+  the operator had pinned via `LANGSTAGE_WORKSPACE_ROOT` / legacy
+  `DEEPAGENT_WORKSPACE_ROOT` or `workspace.root` in `langstage.toml` (advertised ≠
+  honored). A pinned root is now honored: the auto-follow only applies when no
+  workspace is pinned. The pinned value is captured at wrapper init (before
+  `set_root_dir` can mutate it).
+
 ## 0.6.0 - 2026-07-02
 
 ### Changed

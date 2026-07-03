@@ -7,6 +7,25 @@ from pathlib import Path
 from unittest.mock import Mock
 
 
+@pytest.fixture(autouse=True)
+def _restore_workspace_root():
+    """Snapshot + restore the module-level ``config.WORKSPACE_ROOT`` around each test.
+
+    ``set_root_dir()`` mutates this global (gh #36) to re-root the agent. In a real
+    session that's a fresh process, but under pytest the module persists, so the
+    mutation would leak into the next test — and trip the gh #45 pinned-workspace
+    detection, which reads ``config.WORKSPACE_ROOT`` at wrapper init. Restoring it
+    per test keeps isolation.
+    """
+    import langstage_jupyter.config as _cfg
+
+    saved = _cfg.WORKSPACE_ROOT
+    try:
+        yield
+    finally:
+        _cfg.WORKSPACE_ROOT = saved
+
+
 @pytest.fixture
 def clean_env(monkeypatch):
     """

@@ -63,6 +63,14 @@ class AgentWrapper:
             self.agent_variable_name = agent_variable_name or config.AGENT_VARIABLE
 
         self._load_agent()
+        # Whether the operator pinned an explicit workspace root — via
+        # LANGSTAGE_WORKSPACE_ROOT / legacy DEEPAGENT_WORKSPACE_ROOT, or
+        # workspace.root in langstage.toml. config.WORKSPACE_ROOT is None only when
+        # the source is "default" (unset). If pinned, set_root_dir() must honor it
+        # rather than silently re-rooting to JupyterLab's launch dir. Captured here
+        # because set_root_dir() itself mutates config.WORKSPACE_ROOT. (gh #45)
+        self._workspace_pinned = config.WORKSPACE_ROOT is not None
+        self._pinned_root = str(config.WORKSPACE_ROOT) if config.WORKSPACE_ROOT else None
         # The root the agent's backend was just built from (config.WORKSPACE_ROOT,
         # else cwd "."). set_root_dir() compares against this so it only rebuilds
         # when JupyterLab's live root actually differs. (gh #36)
@@ -144,6 +152,19 @@ class AgentWrapper:
         Args:
             root_dir: The root directory path (JupyterLab launch directory)
         """
+        # Honor an explicitly pinned workspace root (LANGSTAGE_WORKSPACE_ROOT /
+        # workspace.root in langstage.toml) — don't silently re-root to JupyterLab's
+        # launch dir. The auto-follow below is only for the default (unpinned) case,
+        # where following the live JupyterLab dir is the convenience. Publish the
+        # pinned root for agents that read it at runtime (setdefault so an explicit
+        # env value the operator already set is never clobbered). (gh #45)
+        if getattr(self, "_workspace_pinned", False):
+            pinned = getattr(self, "_pinned_root", None)
+            if pinned:
+                os.environ.setdefault("LANGSTAGE_WORKSPACE_ROOT", pinned)
+                os.environ.setdefault("DEEPAGENT_WORKSPACE_ROOT", pinned)
+            return
+
         # Publish BOTH the canonical and the legacy env name. The README's own
         # custom-agent example reads canonical `LANGSTAGE_WORKSPACE_ROOT`, so a
         # user following the docs verbatim would otherwise see "." instead of

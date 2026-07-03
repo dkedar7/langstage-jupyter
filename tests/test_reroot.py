@@ -74,5 +74,28 @@ def test_in_place_backend_swap_uses_corrected_import(tmp_path):
     assert isinstance(agent.backend, FilesystemBackend)
 
 
+def test_pinned_workspace_root_is_honored(monkeypatch, tmp_path):
+    # gh #45: an explicitly pinned workspace root (LANGSTAGE_WORKSPACE_ROOT or
+    # workspace.root in langstage.toml) must win — set_root_dir() must NOT silently
+    # re-root to JupyterLab's launch dir, and must not overwrite the pinned env.
+    pinned = str(tmp_path / "pinned")
+    monkeypatch.setenv("LANGSTAGE_WORKSPACE_ROOT", pinned)
+    monkeypatch.delenv("DEEPAGENT_WORKSPACE_ROOT", raising=False)
+
+    w = _wrapper(pinned, object())
+    w._workspace_pinned = True
+    w._pinned_root = pinned
+    calls = []
+    w.reload_agent = lambda: calls.append(1)
+
+    w.set_root_dir(str(tmp_path / "jupyter_launch_dir"))  # the live JupyterLab dir
+
+    import os
+    assert calls == [], "must not rebuild/re-root when a workspace root is pinned"
+    # The pinned root is preserved, NOT clobbered by the JupyterLab launch dir.
+    assert os.environ["LANGSTAGE_WORKSPACE_ROOT"] == pinned
+    assert w._applied_root == AgentWrapper._resolve_root(pinned)
+
+
 def test_resolve_root_normalizes():
     assert AgentWrapper._resolve_root(".") == str(Path(".").resolve())
