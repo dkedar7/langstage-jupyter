@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.2 - 2026-07-03
+
+### Fixed
+- **The 0.6.1 wheel bundled a stale labextension reporting v0.6.0 (gh #48).** 0.6.1
+  was a Python-only fix, and the build hook skips the labextension rebuild when a
+  built copy already exists — so the published wheel shipped the previous release's
+  JS bundle (correct behavior, wrong version label). Rebuilt cleanly so the bundled
+  labextension version matches the package (verified `0.6.2` in the wheel before
+  publish). No functional change to the extension.
+
 ## 0.6.1 - 2026-07-02
 
 ### Fixed
