@@ -40,6 +40,10 @@ class ChatHandler(APIHandler):
         try:
             # Parse request body
             data = self.get_json_body()
+            # get_json_body() returns None for an EMPTY body (it only raises on
+            # invalid JSON), so guard before .get() or an empty POST 500s. (gh #53)
+            if data is None:
+                raise HTTPError(400, "Request body must be a JSON object")
             message = data.get("message")
             thread_id = data.get("thread_id")
             current_directory = data.get("current_directory", "")
@@ -169,6 +173,8 @@ class ResumeHandler(APIHandler):
         """
         try:
             data = self.get_json_body()
+            if data is None:  # empty body -> 400, not a 500 on None.get() (gh #53)
+                raise HTTPError(400, "Request body must be a JSON object")
             decisions = data.get("decisions", [])
             thread_id = data.get("thread_id")
 
@@ -300,6 +306,8 @@ class CancelHandler(APIHandler):
         """
         try:
             data = self.get_json_body()
+            if data is None:  # empty body -> 400, not a 500 on None.get() (gh #53)
+                raise HTTPError(400, "Request body must be a JSON object")
             thread_id = data.get("thread_id")
 
             if not thread_id:
