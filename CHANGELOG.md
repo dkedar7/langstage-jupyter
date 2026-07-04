@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.5 - 2026-07-04
+
+### Fixed
+- **Empty POST body to `/chat`, `/resume`, `/cancel` returned HTTP 500 instead of
+  400 (gh #53).** Jupyter Server's `get_json_body()` returns `None` for an empty
+  body (it only raises on *invalid* JSON), so the handlers hit `None.get(...)` →
+  unhandled `AttributeError` → 500. All three now guard `data is None` and raise
+  `HTTPError(400, "Request body must be a JSON object")`, matching the adjacent
+  malformed-input handling. Reachable from a frontend race, a proxy that drops the
+  body, or a stray client.
+
 ## 0.6.4 - 2026-07-03
 
 ### Changed
