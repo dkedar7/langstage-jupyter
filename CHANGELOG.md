@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.7 - 2026-07-05
+
+### Added
+- **`langstage-jupyter --serve-check` — a headless HTTP smoke test of the deployed
+  extension (gh #56).** The HTTP counterpart of `--verify`: where `--verify` proves the
+  *agent object* completes a turn, `--serve-check` boots the server extension headlessly,
+  polls `/langstage-jupyter/health` until the agent is loaded, POSTs one turn to
+  `/langstage-jupyter/chat`, and asserts the SSE stream yields a non-empty chunk and
+  completes — catching route/registration/handler regressions (e.g. the #53 empty-body
+  500) that `--verify` structurally can't. Exits `0`/`1`; defaults to the keyless demo
+  agent (CI-safe) and honors `-a` to smoke-test a real agent. `--smoke` is an alias.
+
+### Docs
+- Documented the two preflights (`--verify`, `--serve-check`) and the extension's served
+  routes (`/<base_url>langstage-jupyter/{health,chat,resume,reload,cancel}`) in the README.
+
 ## 0.6.6 - 2026-07-04
 
 ### Changed

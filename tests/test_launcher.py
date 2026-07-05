@@ -1,15 +1,18 @@
 """
 Tests for launcher utilities (launcher.py).
 """
+import os
 import socket
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 from langstage_jupyter.launcher import (
     DEMO_AGENT_SPEC,
+    _summarize_sse,
     extract_agent_args,
     find_available_port,
     generate_token,
     main,
+    serve_check,
 )
 
 
@@ -322,3 +325,88 @@ class TestVerifyFlag:
             main()
         assert exc.value.code == 1
         assert "verification failed" in capsys.readouterr().out
+
+
+class TestSummarizeSSE:
+    """_summarize_sse reduces a /chat SSE stream to (chunks, complete, error) — the
+    verdict logic behind --serve-check, unit-tested without a server (gh #56)."""
+
+    def test_clean_stream_counts_chunks_and_completion(self):
+        lines = [
+            'data: {"status": "streaming", "chunk": "hel"}',
+            'data: {"status": "streaming", "chunk": "lo"}',
+            "",  # SSE blank separators are ignored
+            'data: {"status": "complete"}',
+        ]
+        chunks, complete, error = _summarize_sse(lines)
+        assert chunks == 2
+        assert complete is True
+        assert error is None
+
+    def test_bytes_lines_are_decoded(self):
+        # urllib streams bytes; the helper must handle them (the real path).
+        lines = [b'data: {"status": "streaming", "chunk": "hi"}', b'data: {"status": "complete"}']
+        chunks, complete, error = _summarize_sse(lines)
+        assert chunks == 1 and complete is True and error is None
+
+    def test_error_frame_is_captured(self):
+        lines = ['data: {"status": "error", "error": "kaboom"}']
+        chunks, complete, error = _summarize_sse(lines)
+        assert error == "kaboom"
+        assert complete is False
+
+    def test_incomplete_stream_has_no_completion(self):
+        lines = ['data: {"status": "streaming", "chunk": "x"}']  # no complete frame
+        chunks, complete, error = _summarize_sse(lines)
+        assert chunks == 1 and complete is False and error is None
+
+    def test_non_data_and_malformed_lines_ignored(self):
+        lines = ["event: ping", "data: not json", 'data: {"status": "complete"}']
+        chunks, complete, error = _summarize_sse(lines)
+        assert chunks == 0 and complete is True and error is None
+
+
+class TestServeCheckRouting:
+    """main() routes --serve-check / --smoke to serve_check() and exits with its code."""
+
+    @pytest.mark.parametrize("flag", ["--serve-check", "--smoke"])
+    def test_flag_calls_serve_check_and_exits_with_its_code(self, flag, monkeypatch):
+        called = {}
+
+        def fake_serve_check(spec=None, **kw):
+            called["spec"] = spec
+            return 0
+
+        monkeypatch.setattr("langstage_jupyter.launcher.serve_check", fake_serve_check)
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", flag])
+        monkeypatch.delenv("LANGSTAGE_AGENT_SPEC", raising=False)
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 0
+        assert "spec" in called  # it was actually routed here (not to jupyter lab)
+
+    def test_serve_check_honors_explicit_agent_flag(self, monkeypatch):
+        called = {}
+        monkeypatch.setattr(
+            "langstage_jupyter.launcher.serve_check",
+            lambda spec=None, **kw: called.setdefault("spec", spec) or 0,
+        )
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", "-a", "my.py:graph", "--serve-check"])
+        with pytest.raises(SystemExit):
+            main()
+        assert called["spec"] == "my.py:graph"
+
+    def test_help_lists_serve_check(self, monkeypatch, capsys):
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", "--help"])
+        main()
+        assert "--serve-check" in capsys.readouterr().out
+
+
+@pytest.mark.skipif(
+    os.environ.get("RUN_SERVE_CHECK_IT") != "1",
+    reason="real jupyter-server boot; opt in with RUN_SERVE_CHECK_IT=1 (kept out of the "
+    "release matrix to avoid per-cell boot time/flakiness — the served path is proven here)",
+)
+def test_serve_check_end_to_end_with_demo_agent():
+    """The real thing: boot the server extension headlessly and serve one turn."""
+    assert serve_check(DEMO_AGENT_SPEC) == 0
