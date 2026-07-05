@@ -1,6 +1,17 @@
 # Changelog
 
-## 0.6.5 - 2026-07-04
+## 0.6.6 - 2026-07-04
+
+### Changed
+- **The chat sidebar is now branded "LangStage", not "Deep Agents" (dogfood).** The
+  JupyterLab left-rail tab tooltip, launcher entry, and default agent-name fallback all
+  said "Deep Agents" (the pre-rename name); they now read "LangStage". Command IDs and
+  CSS classes (`deepagents:open-chat`, `.deepagents-*`) are unchanged, so nothing that
+  targets them breaks.
+
+### Docs
+- Refreshed the README header to a `langstage-jupyter` SVG banner (was a remote
+  `cover.png` labelled "DeepAgent Lab", the old name).
 
 ### Fixed
 - **Empty POST body to `/chat`, `/resume`, `/cancel` returned HTTP 500 instead of
