@@ -37,6 +37,8 @@ Launcher options:
   --demo             Use the built-in keyless demo agent (no API key).
   --show-config      Print the resolved configuration and exit.
   --verify           Preflight the agent (run one real turn); exit 0/1. Then exit.
+  --serve-check      Headless HTTP smoke test: boot the server extension, serve one
+                     turn over /langstage-jupyter/chat, exit 0/1. Then exit.
   --version, -V      Print the langstage-jupyter version and exit.
   -h, --help         Show this message and exit.
 
@@ -112,6 +114,160 @@ def find_available_port(start_port=8888, max_attempts=10):
 def generate_token():
     """Generate a secure random token for Jupyter authentication."""
     return secrets.token_urlsafe(32)
+
+
+# ── --serve-check: headless HTTP smoke test of the deployed extension ──
+#
+# The served route prefix the extension registers (handlers.setup_handlers).
+SERVE_CHECK_ROUTE = "langstage-jupyter"
+
+
+def _summarize_sse(lines):
+    """Reduce a ``/chat`` SSE stream to ``(chunk_count, saw_complete, error)``.
+
+    Pure so it is unit-testable without booting a server. ``lines`` is any
+    iterable of raw SSE lines; only ``data: {json}`` lines carry frames. A frame
+    with a non-empty ``chunk`` counts; ``{"status": "complete"}`` ends it cleanly;
+    ``{"status": "error"}`` (or an ``error`` key) captures the failure message.
+    """
+    import json as _json
+
+    chunk_count = 0
+    saw_complete = False
+    error = None
+    for raw in lines:
+        if isinstance(raw, bytes):  # urllib streams bytes lines; tests pass str
+            raw = raw.decode("utf-8", "replace")
+        line = raw.strip()
+        if not line.startswith("data:"):
+            continue
+        try:
+            frame = _json.loads(line[len("data:"):].strip())
+        except ValueError:
+            continue
+        if not isinstance(frame, dict):
+            continue
+        if frame.get("chunk"):
+            chunk_count += 1
+        if frame.get("status") == "complete":
+            saw_complete = True
+        if frame.get("status") == "error" or frame.get("error"):
+            error = frame.get("error") or frame.get("message") or "agent error"
+    return chunk_count, saw_complete, error
+
+
+def serve_check(agent_spec=None, *, boot_timeout=45.0, turn_timeout=60.0):
+    """Boot the extension headlessly, drive one served turn, return an exit code.
+
+    The HTTP counterpart of ``--verify`` (ADR 0004): ``--verify`` proves the *agent
+    object* completes a turn but never touches the server extension, so a route/
+    registration/handler regression (e.g. the gh #53 empty-body 500) passes it while
+    the *served* endpoint is broken. This boots a real ``jupyter server`` (the server
+    extension only — no browser/frontend needed to exercise the handler surface),
+    polls ``/{route}/health`` until the agent is loaded, POSTs one turn to
+    ``/{route}/chat`` and asserts the SSE stream yields >=1 non-empty ``chunk`` and
+    ends with ``{"status": "complete"}``, then tears the server down.
+
+    ``agent_spec`` defaults to the keyless demo agent so it runs in CI with no API
+    key; pass a spec (``-a``) to smoke-test a real agent end-to-end over HTTP.
+    Returns ``0`` (served turn verified) or ``1`` (any failure), printing a one-line
+    verdict either way.
+    """
+    import json
+    import time
+    import urllib.error
+    import urllib.request
+
+    spec = (agent_spec or "").strip() or DEMO_AGENT_SPEC
+    port = find_available_port()
+    token = generate_token()
+    base = f"http://localhost:{port}/{SERVE_CHECK_ROUTE}"
+
+    env = dict(os.environ)
+    # The agent under test, and the callback URL/token its notebook tools use.
+    env["LANGSTAGE_AGENT_SPEC"] = env["DEEPAGENT_AGENT_SPEC"] = spec
+    env["LANGSTAGE_JUPYTER_SERVER_URL"] = env["DEEPAGENT_JUPYTER_SERVER_URL"] = f"http://localhost:{port}"
+    env["LANGSTAGE_JUPYTER_TOKEN"] = env["DEEPAGENT_JUPYTER_TOKEN"] = token
+
+    def _request(path, data=None, timeout=10.0):
+        headers = {"Authorization": f"token {token}"}
+        body = None
+        if data is not None:
+            headers["Content-Type"] = "application/json"
+            body = json.dumps(data).encode()
+        req = urllib.request.Request(base + path, data=body, headers=headers)
+        return urllib.request.urlopen(req, timeout=timeout)
+
+    proc = subprocess.Popen(
+        [
+            sys.executable, "-m", "jupyter_server",
+            "--no-browser",
+            f"--ServerApp.port={port}",
+            f"--ServerApp.token={token}",
+            "--ServerApp.open_browser=False",
+            # Local ephemeral smoke-test server; token auth already gates it and
+            # exempts XSRF, but disable the check so the POST can't 403 on it.
+            "--ServerApp.disable_check_xsrf=True",
+        ],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    try:
+        # 1. Poll health until the agent is loaded (server boot + agent import).
+        deadline = time.monotonic() + boot_timeout
+        health = None
+        while time.monotonic() < deadline:
+            if proc.poll() is not None:  # server died before serving
+                print("[fail] serve-check: jupyter server exited before it was ready "
+                      f"(code {proc.returncode})")
+                return 1
+            try:
+                health = json.loads(_request("/health", timeout=3.0).read())
+                if health.get("agent_loaded"):
+                    break
+            except (urllib.error.URLError, ConnectionError, OSError, ValueError):
+                pass  # not up yet
+            time.sleep(0.5)
+        if not (health and health.get("agent_loaded")):
+            print(f"[fail] serve-check: agent never became ready within {boot_timeout:.0f}s "
+                  f"(last health: {health})")
+            return 1
+
+        # 2. Drive one served turn and inspect the SSE stream.
+        try:
+            resp = _request(
+                "/chat", data={"message": "serve-check ping", "thread_id": "serve-check"},
+                timeout=turn_timeout,
+            )
+            chunks, complete, error = _summarize_sse(iter(resp))
+        except urllib.error.HTTPError as e:
+            print(f"[fail] serve-check: POST /{SERVE_CHECK_ROUTE}/chat returned HTTP {e.code} "
+                  f"({e.reason})")
+            return 1
+        except (urllib.error.URLError, OSError) as e:
+            print(f"[fail] serve-check: POST /{SERVE_CHECK_ROUTE}/chat failed: {e}")
+            return 1
+
+        if error is not None:
+            print(f"[fail] serve-check: the served turn errored: {error}")
+            return 1
+        if chunks < 1 or not complete:
+            print(f"[fail] serve-check: incomplete turn "
+                  f"(streamed {chunks} chunk(s), complete={complete})")
+            return 1
+
+        name = health.get("agent_name") or spec
+        print(f"[ ok ] served turn verified: agent={name!r}, streamed {chunks} chunks, "
+              f"completed cleanly (routes under /{SERVE_CHECK_ROUTE}/)")
+        return 0
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:  # pragma: no cover - best-effort teardown
+            proc.kill()
 
 
 def main():
@@ -203,6 +359,13 @@ def main():
         print(f"[fail] agent verification failed: {result.reason}")
         sys.exit(1)
 
+    # --serve-check: the HTTP counterpart of --verify. Boot the server extension
+    # headlessly and prove the DEPLOYED endpoint serves a turn — catching route/
+    # registration/handler regressions --verify structurally can't (ADR 0004).
+    # Defaults to the keyless demo agent (CI-safe); honors -a for a real agent.
+    if "--serve-check" in args or "--smoke" in args:
+        sys.exit(serve_check(agent_spec))
+
     if agent_spec:
         print(f"Agent spec: {agent_spec}")
 
@@ -245,9 +408,9 @@ def main():
     token = os.getenv('JUPYTER_TOKEN')
     if not token:
         token = generate_token()
-        print(f"Generated secure authentication token")
+        print("Generated secure authentication token")
     else:
-        print(f"Using existing JUPYTER_TOKEN from environment")
+        print("Using existing JUPYTER_TOKEN from environment")
 
     # Determine server URL
     # Use localhost for security (only local connections)
@@ -261,12 +424,12 @@ def main():
     os.environ['DEEPAGENT_JUPYTER_TOKEN'] = token
 
     print(f"\n{'='*60}")
-    print(f"LangStage Jupyter Configuration:")
+    print("LangStage Jupyter Configuration:")
     print(f"  Server URL: {server_url}")
     print(f"  Token: {'*' * 20} (hidden for security)")
-    print(f"  Environment variables set:")
-    print(f"    - LANGSTAGE_JUPYTER_SERVER_URL")
-    print(f"    - LANGSTAGE_JUPYTER_TOKEN")
+    print("  Environment variables set:")
+    print("    - LANGSTAGE_JUPYTER_SERVER_URL")
+    print("    - LANGSTAGE_JUPYTER_TOKEN")
     print(f"{'='*60}\n")
 
     # Launch JupyterLab via THIS interpreter (sys.executable -m jupyterlab),

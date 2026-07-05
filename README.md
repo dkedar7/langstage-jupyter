@@ -100,6 +100,26 @@ langstage-jupyter --demo
 langstage-jupyter --show-config
 ```
 
+### Preflight checks (`--verify`, `--serve-check`)
+
+Two headless, no-browser preflights that exit `0`/`1` — handy in CI or before a deploy:
+
+```bash
+# Preflight the AGENT OBJECT: load the configured (or --demo) agent and run one real
+# turn through it. Catches a bad API key / broken tool / non-runnable graph.
+langstage-jupyter --verify
+
+# Preflight the SERVED ENDPOINT: boot the server extension, poll /langstage-jupyter/health
+# until the agent is loaded, then POST one turn to /langstage-jupyter/chat and assert the
+# SSE stream completes. Catches route/registration/handler regressions that --verify can't
+# (it never touches HTTP). Defaults to the keyless demo agent; add -a to test a real one.
+langstage-jupyter --serve-check
+langstage-jupyter -a my_agent.py:graph --serve-check
+```
+
+The extension serves its REST/SSE routes under `/<base_url>langstage-jupyter/`:
+`health` (GET), `chat` (POST, SSE), `resume` (POST, SSE), `reload` (POST), `cancel` (POST).
+
 ### Alternative: Manual Configuration
 
 If you prefer manual control or need to use `jupyter lab` directly, you can set the environment variables yourself:
