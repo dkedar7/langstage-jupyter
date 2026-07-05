@@ -26,7 +26,7 @@ namespace CommandIDs {
  */
 const plugin: JupyterFrontEndPlugin<void> = {
   id: 'langstage-jupyter:plugin',
-  description: 'A JupyterLab extension for DeepAgents chat interface',
+  description: 'A JupyterLab extension for LangStage chat interface',
   autoStart: true,
   optional: [ICommandPalette, IFileBrowserFactory],
   activate: (
@@ -42,15 +42,15 @@ const plugin: JupyterFrontEndPlugin<void> = {
     widget.title.label = ''; // Remove label from sidebar, show only icon
     widget.title.icon = chatIcon;
     widget.title.closable = true;
-    widget.title.caption = 'Deep Agents'; // Tooltip on hover
+    widget.title.caption = 'LangStage'; // Tooltip on hover
 
     // Add to right sidebar at the bottom (high rank value)
     app.shell.add(widget, 'right', { rank: 1000 });
 
     // Add command to open chat (useful if user closes the widget)
     app.commands.addCommand(CommandIDs.openChat, {
-      label: 'Deep Agents',
-      caption: 'Open DeepAgents chat interface',
+      label: 'LangStage',
+      caption: 'Open LangStage chat interface',
       icon: chatIcon,
       execute: () => {
         if (!widget.isAttached) {
@@ -64,11 +64,11 @@ const plugin: JupyterFrontEndPlugin<void> = {
     if (palette) {
       palette.addItem({
         command: CommandIDs.openChat,
-        category: 'Deep Agents'
+        category: 'LangStage'
       });
     }
 
-    console.log('DeepAgents chat interface ready');
+    console.log('LangStage chat interface ready');
   }
 };
 

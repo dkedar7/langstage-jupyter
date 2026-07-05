@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://storage.googleapis.com/deepagents/cover.png" alt="DeepAgent Lab" width=600>
+  <img src="assets/header.svg" alt="langstage-jupyter — chat with your LangGraph agent inside JupyterLab" width="100%">
 </p>
 
 <p align="center">

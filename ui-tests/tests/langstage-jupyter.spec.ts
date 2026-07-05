@@ -1,7 +1,7 @@
 import { expect, test } from '@jupyterlab/galata';
 
 /**
- * Smoke test: open the Deep Agents chat sidebar, confirm it connects to the
+ * Smoke test: open the LangStage chat sidebar, confirm it connects to the
  * (stub) agent, send a message, and verify the streamed reply renders.
  *
  * The backend agent is the model-free stub (see stub_agent.py), so this runs

@@ -91,7 +91,7 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [agentStatus, setAgentStatus] = useState<'unknown' | 'healthy' | 'error'>('unknown');
-  const [agentName, setAgentName] = useState<string>('Deep Agents');
+  const [agentName, setAgentName] = useState<string>('LangStage');
   const [threadId, setThreadId] = useState<string>(() => crypto.randomUUID());
   const [awaitingDecision, setAwaitingDecision] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -121,7 +121,7 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
         setAgentStatus('healthy');
 
         // Update agent name if available
-        const name = response.agent_name || 'Deep Agents';
+        const name = response.agent_name || 'LangStage';
         setAgentName(name);
         if (onAgentNameChange) {
           onAgentNameChange(name);
