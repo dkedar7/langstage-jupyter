@@ -205,6 +205,11 @@ def serve_check(agent_spec=None, *, boot_timeout=45.0, turn_timeout=60.0):
             f"--ServerApp.port={port}",
             f"--ServerApp.token={token}",
             "--ServerApp.open_browser=False",
+            # CI runners and Docker images commonly run as root, and jupyter_server
+            # refuses to boot as root without this — so serve-check died before it
+            # could serve in exactly the environments it targets (gh #58). Safe here:
+            # an ephemeral, token-gated, localhost-only server we spawn and tear down.
+            "--ServerApp.allow_root=True",
             # Local ephemeral smoke-test server; token auth already gates it and
             # exempts XSRF, but disable the check so the POST can't 403 on it.
             "--ServerApp.disable_check_xsrf=True",
@@ -214,14 +219,27 @@ def serve_check(agent_spec=None, *, boot_timeout=45.0, turn_timeout=60.0):
         stderr=subprocess.STDOUT,
         text=True,
     )
+
+    def _server_output_tail(n=6):
+        """The last few lines the (now-exited) server wrote — so the real cause
+        (a bad port, a config error, the root guard) is shown, not just a code
+        (gh #58: the diagnostic used to be swallowed)."""
+        try:
+            out = proc.stdout.read() if proc.stdout else ""
+        except (ValueError, OSError):  # pragma: no cover - stream already closed
+            return ""
+        lines = [ln for ln in (out or "").splitlines() if ln.strip()]
+        return ("\n  " + "\n  ".join(lines[-n:])) if lines else ""
+
     try:
         # 1. Poll health until the agent is loaded (server boot + agent import).
         deadline = time.monotonic() + boot_timeout
         health = None
         while time.monotonic() < deadline:
             if proc.poll() is not None:  # server died before serving
-                print("[fail] serve-check: jupyter server exited before it was ready "
-                      f"(code {proc.returncode})")
+                tail = _server_output_tail()
+                print(f"[fail] serve-check: jupyter server exited before it was ready "
+                      f"(code {proc.returncode}){' — last output:' + tail if tail else ''}")
                 return 1
             try:
                 health = json.loads(_request("/health", timeout=3.0).read())

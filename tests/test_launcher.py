@@ -402,6 +402,64 @@ class TestServeCheckRouting:
         assert "--serve-check" in capsys.readouterr().out
 
 
+class TestServeCheckServerSpawn:
+    """serve_check() must boot the server so it works in CI/Docker (as root), and
+    surface the server's own output when it dies before serving (gh #58)."""
+
+    class _DeadProc:
+        """A spawned server that exited immediately, with captured output."""
+
+        returncode = 1
+
+        def __init__(self, output):
+            import io
+
+            self.stdout = io.StringIO(output)
+
+        def poll(self):
+            return self.returncode  # already exited
+
+        def terminate(self):
+            pass
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+        def kill(self):
+            pass
+
+    def _run_with_fake_server(self, monkeypatch, output):
+        captured = {}
+
+        def fake_popen(argv, **kwargs):
+            captured["argv"] = argv
+            return self._DeadProc(output)
+
+        monkeypatch.setattr("langstage_jupyter.launcher.subprocess.Popen", fake_popen)
+        monkeypatch.setattr("langstage_jupyter.launcher.find_available_port", lambda *a, **k: 12321)
+        code = serve_check(DEMO_AGENT_SPEC, boot_timeout=1.0)
+        return code, captured["argv"]
+
+    def test_spawns_server_with_allow_root(self, monkeypatch, capsys):
+        # gh #58: CI/Docker run as root; jupyter_server refuses to boot as root
+        # without allow_root, so the spawned server MUST carry it.
+        code, argv = self._run_with_fake_server(monkeypatch, "boom\n")
+        assert code == 1  # our fake server "died", so the check fails...
+        assert any("allow_root=True" in a for a in argv), argv  # ...but with the flag set
+
+    def test_early_exit_surfaces_server_output(self, monkeypatch, capsys):
+        # gh #58: the real cause used to be swallowed — the verdict must include the
+        # server's own last lines (e.g. the root guard), not just an exit code.
+        code, _ = self._run_with_fake_server(
+            monkeypatch,
+            "some noise\nRunning as root is not recommended. Use --allow-root to bypass.\n",
+        )
+        out = capsys.readouterr().out
+        assert code == 1
+        assert "exited before it was ready" in out
+        assert "Running as root" in out  # the actual diagnostic is now shown
+
+
 @pytest.mark.skipif(
     os.environ.get("RUN_SERVE_CHECK_IT") != "1",
     reason="real jupyter-server boot; opt in with RUN_SERVE_CHECK_IT=1 (kept out of the "
