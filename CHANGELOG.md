@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.8 - 2026-07-06
+
+### Fixed
+- **`--serve-check` now works when running as root — i.e. in CI and Docker, the
+  environments it targets (gh #58).** `serve_check()` spawned its `jupyter_server`
+  without `--allow-root`, so the server hit Jupyter's root guard and exited before it
+  could serve; the spawned server now passes `--ServerApp.allow_root=True` (safe: an
+  ephemeral, token-gated, localhost-only smoke server). And when the server exits before
+  it is ready, the verdict now includes the server's own last output lines (the real
+  cause — a root guard, a port clash, a config error) instead of a bare exit code.
+
 ## 0.6.7 - 2026-07-05
 
 ### Added
