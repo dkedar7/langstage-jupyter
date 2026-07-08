@@ -90,7 +90,8 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [agentStatus, setAgentStatus] = useState<'unknown' | 'healthy' | 'error'>('unknown');
+  const [agentStatus, setAgentStatus] = useState<'unknown' | 'healthy' | 'needs_setup' | 'error'>('unknown');
+  const [agentStatusMessage, setAgentStatusMessage] = useState<string>('');
   const [agentName, setAgentName] = useState<string>('LangStage');
   const [threadId, setThreadId] = useState<string>(() => crypto.randomUUID());
   const [awaitingDecision, setAwaitingDecision] = useState(false);
@@ -117,7 +118,13 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
         method: 'GET'
       });
 
-      if (response.agent_loaded) {
+      // `ready` (not merely `agent_loaded`) gates the 🟢 indicator: the agent can
+      // actually run a turn. A loaded-but-not-ready agent — an uncompiled graph, or the
+      // default agent with no provider key — shows a distinct 🟠 state with an actionable
+      // message instead of a green "ready" that fails on the first turn (gh #60).
+      const message = response.message || '';
+      setAgentStatusMessage(message);
+      if (response.ready) {
         setAgentStatus('healthy');
 
         // Update agent name if available
@@ -128,13 +135,21 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
         }
 
         addSystemMessage('Agent is ready and connected');
+      } else if (response.agent_loaded) {
+        // Loaded, but not runnable yet (e.g. missing API key) — amber, not green.
+        setAgentStatus('needs_setup');
+        if (response.agent_name) {
+          setAgentName(response.agent_name);
+        }
+        addSystemMessage(message || 'Agent loaded but not ready to run a turn.');
       } else {
         setAgentStatus('error');
-        addSystemMessage('Agent not loaded. Please ensure agent.py is configured correctly.');
+        addSystemMessage(message || 'Agent not loaded. Please ensure agent.py is configured correctly.');
       }
     } catch (error) {
       console.error('Error checking agent health:', error);
       setAgentStatus('error');
+      setAgentStatusMessage('Failed to connect to agent service');
       addSystemMessage('Failed to connect to agent service');
     }
   };
@@ -684,7 +699,10 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
         <div className="deepagents-chat-controls">
           <span
             className={`deepagents-status-indicator deepagents-status-${agentStatus}`}
-            title={agentStatus === 'healthy' ? 'Agent connected' : 'Agent not available'}
+            title={
+              agentStatusMessage ||
+              (agentStatus === 'healthy' ? 'Agent connected' : 'Agent not available')
+            }
           />
           <button
             className="deepagents-icon-button"

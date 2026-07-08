@@ -1,6 +1,17 @@
 # Changelog
 
-## 0.6.8 - 2026-07-06
+## 0.6.9 - 2026-07-07
+
+### Fixed
+- **The sidebar status no longer shows 🟢 "ready" for an agent that can't actually run a
+  turn (gh #60).** Readiness was `agent is not None`, but the bundled default agent's model
+  is built lazily — it constructs fine with no `ANTHROPIC_API_KEY` and only fails at the
+  first API call — so a common first-run (no key) lit green, then the first message failed
+  with a raw provider auth error. Readiness now reflects runnability: the `/health` endpoint
+  returns a `ready` flag gated on the agent being a runnable graph **and** (for the default
+  agent) its provider key being present, and the sidebar shows a distinct 🟠 `needs_setup`
+  state with an actionable tooltip (e.g. "ANTHROPIC_API_KEY is not set — the first turn will
+  fail") instead of green. A custom/BYO agent's credentials remain the operator's concern.
 
 ### Fixed
 - **`--serve-check` now works when running as root — i.e. in CI and Docker, the
