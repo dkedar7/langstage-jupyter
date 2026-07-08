@@ -3,6 +3,7 @@ HTTP request handlers for the DeepAgents extension.
 """
 import asyncio
 import json
+import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Dict
@@ -20,6 +21,73 @@ _executor = ThreadPoolExecutor(max_workers=4)
 # Track active executions and their cancellation flags
 _active_executions: Dict[str, threading.Event] = {}
 _execution_lock = threading.Lock()
+
+# The standard env var each model provider needs — for a cheap credential preflight so
+# the sidebar doesn't report "ready" for the bundled default agent when its key is
+# missing and the first turn would fail with a raw provider auth error (gh #60).
+_PROVIDER_KEY_ENV = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "azure_openai": "AZURE_OPENAI_API_KEY",
+    "google_genai": "GOOGLE_API_KEY",
+    "google_vertexai": "GOOGLE_API_KEY",
+    "groq": "GROQ_API_KEY",
+    "mistralai": "MISTRAL_API_KEY",
+    "cohere": "COHERE_API_KEY",
+    "fireworks": "FIREWORKS_API_KEY",
+    "together": "TOGETHER_API_KEY",
+    "xai": "XAI_API_KEY",
+    "deepseek": "DEEPSEEK_API_KEY",
+}
+
+
+def _missing_default_agent_key() -> Optional[str]:
+    """The provider key the BUNDLED default agent needs, if it is absent.
+
+    The default agent's model is built lazily via ``init_chat_model(MODEL_NAME)``, so the
+    object constructs fine with no key and only fails at the first API call — which is why
+    readiness (`agent is not None`) read "ready" while the first turn died with a provider
+    auth error (gh #60). A custom/BYO agent's credentials are the operator's concern, so
+    this preflight is scoped to the default agent, where the model spec (and thus the
+    required key) is known.
+    """
+    from . import config
+
+    if config.AGENT_SPEC:  # a custom agent was configured -> not our concern
+        return None
+    model_name = (getattr(config, "MODEL_NAME", "") or "").strip()
+    provider = model_name.split(":", 1)[0].lower() if ":" in model_name else ""
+    env_var = _PROVIDER_KEY_ENV.get(provider)
+    if env_var and not os.environ.get(env_var):
+        return env_var
+    return None
+
+
+def _agent_readiness():
+    """Assess whether the loaded agent can actually run a turn (gh #60, #69).
+
+    Returns ``(status, ready, message)``. "loaded" (`agent is not None`) is not enough:
+    an uncompiled graph loads but has no ``astream``, and the default agent loads without
+    its provider key but fails on the first turn. Readiness reflects both.
+    """
+    agent = get_agent()
+    obj = getattr(agent, "agent", None)
+    if obj is None:
+        return "agent_not_loaded", False, "Agent module not found or failed to load"
+    if not callable(getattr(obj, "astream", None)):
+        return (
+            "not_runnable",
+            False,
+            "Loaded, but not a runnable graph — export a compiled graph (call .compile()).",
+        )
+    missing = _missing_default_agent_key()
+    if missing:
+        return (
+            "needs_setup",
+            False,
+            f"Loaded, but {missing} is not set — the first turn will fail. Set it and reload.",
+        )
+    return "healthy", True, "Agent is ready"
 
 
 class ChatHandler(APIHandler):
@@ -258,30 +326,26 @@ class HealthHandler(APIHandler):
 
     @tornado.web.authenticated
     async def get(self):
-        """Check agent health status."""
+        """Report readiness — whether the agent can actually run a turn, not merely
+        whether the object loaded (gh #60). ``ready`` gates the sidebar 🟢 indicator;
+        ``agent_loaded`` stays accurate (the object is present) for back-compat.
+        """
         try:
             agent = get_agent()
             is_loaded = agent.agent is not None
+            status, ready, message = _agent_readiness()
 
             # Try to get agent name if available
             agent_name = None
-            if is_loaded:
-                # Debug: log what attributes the agent has
-                self.log.info(f"Agent type: {type(agent.agent)}")
-
-                if hasattr(agent.agent, 'name'):
-                    agent_name = agent.agent.name
-                    self.log.info(f"Found agent name: {agent_name}")
-                else:
-                    self.log.info("Agent does not have 'name' attribute")
+            if is_loaded and hasattr(agent.agent, "name"):
+                agent_name = agent.agent.name
 
             response = {
-                "status": "healthy" if is_loaded else "agent_not_loaded",
+                "status": status,
                 "agent_loaded": is_loaded,
-                "message": "Agent is ready" if is_loaded else "Agent module not found or failed to load"
+                "ready": ready,
+                "message": message,
             }
-
-            # Include agent name if available
             if agent_name:
                 response["agent_name"] = agent_name
 

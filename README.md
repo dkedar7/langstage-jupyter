@@ -228,10 +228,10 @@ See [.env.example](https://github.com/dkedar7/langstage-jupyter/blob/main/.env.e
 
 - **⟳ Reload**: Reload your agent without restarting JupyterLab (useful during agent development)
 - **Clear**: Start a new conversation thread
-- **Status Indicator**:
-  - 🟢 Green: Agent ready
-  - 🟠 Orange: Agent loading
-  - 🔴 Red: Agent error
+- **Status Indicator** (hover for details):
+  - 🟢 Green: Agent ready — it can actually run a turn
+  - 🟠 Orange: Loaded but not ready — e.g. the default agent's `ANTHROPIC_API_KEY` isn't set (the first turn would fail), or an uncompiled graph was exported. The tooltip says what to fix.
+  - 🔴 Red: Agent error — the agent module didn't load
 
 ## Development
 

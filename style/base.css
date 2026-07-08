@@ -145,6 +145,11 @@
   background-color: var(--da-error);
 }
 
+/* Loaded, but not ready to run a turn (e.g. missing API key) — amber, not green (gh #60). */
+.deepagents-status-needs_setup {
+  background-color: var(--da-warning);
+}
+
 .deepagents-status-unknown {
   background-color: var(--da-warning);
 }
