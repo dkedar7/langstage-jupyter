@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.10 - 2026-07-08
+
+### Fixed
+- **The launcher now propagates JupyterLab's exit code (gh #62).** `langstage-jupyter` ran
+  `jupyter lab` via `subprocess.run(...)` but discarded the return code, so a startup
+  failure (port in use, a fatal config error, the root guard) still exited **0** — masking
+  the failure from `set -e`, CI steps, systemd, healthchecks, and `langstage-jupyter && …`.
+  It now exits with the child's return code.
+
 ## 0.6.9 - 2026-07-07
 
 ### Fixed

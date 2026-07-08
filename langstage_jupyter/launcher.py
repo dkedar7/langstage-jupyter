@@ -471,7 +471,11 @@ def main():
     # Launch Jupyter Lab
     print(f"Launching: {' '.join(jupyter_args)}\n")
     try:
-        subprocess.run(jupyter_args, env=os.environ)
+        # Propagate JupyterLab's exit code — otherwise a startup failure (port in use,
+        # a fatal config error, the root guard) exits the launcher 0, so `set -e`, CI
+        # steps, systemd, and `langstage-jupyter && next` all think it succeeded (gh #62).
+        result = subprocess.run(jupyter_args, env=os.environ)
+        sys.exit(result.returncode)
     except KeyboardInterrupt:
         print("\n\nShutting down DeepAgent Lab...")
         sys.exit(0)
