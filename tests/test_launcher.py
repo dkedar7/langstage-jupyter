@@ -45,18 +45,22 @@ class TestExtractAgentArgs:
 class TestMainAgentWiring:
     """main() wires the agent flags into DEEPAGENT_AGENT_SPEC."""
 
-    def _run_main(self, argv, monkeypatch):
+    def _run_main(self, argv, monkeypatch, returncode=0):
         calls = {}
 
         def fake_run(cmd, env=None):
             calls["cmd"] = cmd
             calls["env_spec"] = (env or {}).get("LANGSTAGE_AGENT_SPEC")
+            return MagicMock(returncode=returncode)
 
         monkeypatch.setattr("langstage_jupyter.launcher.subprocess.run", fake_run)
         monkeypatch.setattr("sys.argv", ["langstage-jupyter"] + argv)
         monkeypatch.delenv("LANGSTAGE_AGENT_SPEC", raising=False)
         monkeypatch.delenv("DEEPAGENT_AGENT_SPEC", raising=False)
-        main()
+        # main() now propagates JupyterLab's exit code via sys.exit (gh #62).
+        with pytest.raises(SystemExit) as exc:
+            main()
+        calls["exit_code"] = exc.value.code
         return calls
 
     def test_demo_sets_stub_spec(self, monkeypatch):
@@ -70,6 +74,16 @@ class TestMainAgentWiring:
         assert calls["env_spec"] == "my.py:graph"
         assert "-a" not in calls["cmd"]
         assert "my.py:graph" not in calls["cmd"]
+
+    def test_launcher_propagates_jupyterlab_exit_code(self, monkeypatch):
+        # gh #62: a JupyterLab startup failure (port in use, root guard, bad config)
+        # exits non-zero, but the launcher discarded returncode and exited 0 — masking
+        # failures from set -e / CI / systemd. It must now surface the child's code.
+        calls = self._run_main(["--no-browser"], monkeypatch, returncode=1)
+        assert calls["exit_code"] == 1
+        # ...and a clean exit still propagates 0.
+        calls = self._run_main(["--no-browser"], monkeypatch, returncode=0)
+        assert calls["exit_code"] == 0
 
     def test_demo_and_agent_conflict(self, monkeypatch):
         monkeypatch.setattr("sys.argv", ["langstage-jupyter", "--demo", "-a", "x.py:g"])
@@ -269,10 +283,12 @@ class TestPortHandling:
 
         def fake_run(cmd, env=None):
             calls["cmd"] = cmd
+            return MagicMock(returncode=0)
 
         monkeypatch.setattr("langstage_jupyter.launcher.subprocess.run", fake_run)
         monkeypatch.setattr("sys.argv", ["langstage-jupyter"] + argv)
-        main()
+        with pytest.raises(SystemExit):  # main() propagates the child's exit code (gh #62)
+            main()
         return calls
 
     @pytest.mark.parametrize("bad", ["--port=", "--port=notaport"])
