@@ -90,6 +90,28 @@ class TestMainAgentWiring:
         with pytest.raises(SystemExit):
             main()
 
+    def test_injects_allow_root_when_running_as_root(self, monkeypatch):
+        # gh #64: the jupyter/* Docker images, Binder, CI, K8s, and devcontainers all run
+        # as root, and jupyter_server refuses to boot as root without --allow-root — so
+        # the headline launch died (exit 1) in exactly the environments --serve-check (#58)
+        # was hardened for. main() must inject --allow-root when euid == 0.
+        monkeypatch.setattr(os, "geteuid", lambda: 0, raising=False)
+        calls = self._run_main(["--no-browser"], monkeypatch)
+        assert "--allow-root" in calls["cmd"]
+
+    def test_no_allow_root_when_not_root(self, monkeypatch):
+        # A non-root laptop must NOT get --allow-root injected (jupyter would warn/refuse
+        # differently, and there's no reason to relax the guard off-root).
+        monkeypatch.setattr(os, "geteuid", lambda: 1000, raising=False)
+        calls = self._run_main(["--no-browser"], monkeypatch)
+        assert "--allow-root" not in calls["cmd"]
+
+    def test_allow_root_not_duplicated_when_user_passed_it(self, monkeypatch):
+        # If the user already passed --allow-root, don't add a second one.
+        monkeypatch.setattr(os, "geteuid", lambda: 0, raising=False)
+        calls = self._run_main(["--no-browser", "--allow-root"], monkeypatch)
+        assert calls["cmd"].count("--allow-root") == 1
+
 
 class TestLauncherHelpAndShowConfig:
     """--help shows the launcher's own flags; --show-config reflects -a/--demo."""

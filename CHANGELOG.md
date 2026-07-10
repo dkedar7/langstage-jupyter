@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.11 - 2026-07-09
+
+### Fixed
+- **The headline `langstage-jupyter` launcher died immediately when run as root (gh #64).**
+  jupyter_server refuses to boot as root without `--allow-root`, so the primary zero-config
+  command exited `1` (after the extension loaded) on the `jupyter/*` Docker images, Binder,
+  CI runners, K8s notebook pods, and devcontainers — the exact root environments
+  `--serve-check` was hardened for (gh #58). The launch path now mirrors that treatment:
+  when `os.geteuid() == 0` and the user hasn't already passed it, it injects `--allow-root`
+  (same rationale as #58 — a token-gated, localhost server). A non-root laptop is unchanged,
+  and an explicit user `--allow-root` isn't duplicated.
+
 ## 0.6.10 - 2026-07-08
 
 ### Fixed

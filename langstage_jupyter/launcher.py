@@ -468,6 +468,20 @@ def main():
     # Add any user-provided arguments
     jupyter_args.extend(args)
 
+    # The jupyter/* Docker images, Binder, CI runners, K8s notebook pods, and
+    # devcontainers all run as root, and jupyter_server refuses to boot as root
+    # without --allow-root — so the headline `langstage-jupyter` launch died
+    # immediately (exit 1, after the extension loaded) in exactly the environments
+    # --serve-check was hardened for (gh #58). Mirror that treatment on the real launch
+    # path (gh #64): inject --allow-root when we're root and the user hasn't already
+    # passed it. Same rationale as #58 — a token-gated, localhost server.
+    if (
+        hasattr(os, 'geteuid')
+        and os.geteuid() == 0
+        and not any(a == '--allow-root' or a.startswith('--ServerApp.allow_root') for a in args)
+    ):
+        jupyter_args.append('--allow-root')
+
     # Launch Jupyter Lab
     print(f"Launching: {' '.join(jupyter_args)}\n")
     try:
