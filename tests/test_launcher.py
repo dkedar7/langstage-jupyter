@@ -344,6 +344,57 @@ class TestVerifyFlag:
         assert exc.value.code == 0
         assert "agent verified" in capsys.readouterr().out
 
+    def test_verify_default_agent_missing_key_names_the_variable(self, monkeypatch, capsys):
+        # gh #66: with the BUNDLED default agent and no ANTHROPIC_API_KEY, --verify must
+        # name the missing variable — the same actionable message /health gives (gh #60) —
+        # instead of dumping a raw provider `TypeError: Could not resolve authentication
+        # method...`. It short-circuits BEFORE building the agent / calling core.verify.
+        monkeypatch.setenv("LANGSTAGE_AGENT_SPEC", "")  # default agent (no explicit spec)
+        monkeypatch.setenv("DEEPAGENT_AGENT_SPEC", "")
+        monkeypatch.delenv("LANGSTAGE_MODEL_NAME", raising=False)  # default anthropic model
+        monkeypatch.delenv("DEEPAGENT_MODEL_NAME", raising=False)
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        # If the short-circuit regressed, core.verify() would run a real turn — make that a
+        # hard failure rather than a slow/networked pass.
+        monkeypatch.setattr(
+            "langstage_core.agui.verify",
+            lambda *a, **k: pytest.fail("core.verify must not run when the default key is missing"),
+        )
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", "--verify"])
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 1
+        out = capsys.readouterr().out
+        assert "ANTHROPIC_API_KEY" in out       # names the exact variable...
+        assert "verification failed" in out     # ...as a verify verdict...
+        assert "TypeError" not in out           # ...not a raw provider stack string (gh #66)
+
+    def test_verify_default_agent_with_key_still_runs_the_real_turn(self, monkeypatch, capsys):
+        # The credential short-circuit is scoped to a MISSING key: when the key is present,
+        # --verify must fall through to the real one-turn check (core.verify), not skip it.
+        monkeypatch.setenv("LANGSTAGE_AGENT_SPEC", "")
+        monkeypatch.setenv("DEEPAGENT_AGENT_SPEC", "")
+        monkeypatch.delenv("LANGSTAGE_MODEL_NAME", raising=False)
+        monkeypatch.delenv("DEEPAGENT_MODEL_NAME", raising=False)
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-not-real")
+        ran = {}
+
+        class _Result:
+            ok = True
+            reason = "one turn completed cleanly"
+
+        def fake_verify(graph, *a, **k):
+            ran["called"] = True
+            return _Result()
+
+        monkeypatch.setattr("langstage_core.agui.verify", fake_verify)
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", "--verify"])
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 0
+        assert ran.get("called") is True  # the real turn WAS attempted
+        assert "agent verified" in capsys.readouterr().out
+
     def test_verify_broken_agent_fails_exit_one(self, monkeypatch, capsys, tmp_path):
         agent = tmp_path / "broken.py"
         agent.write_text(

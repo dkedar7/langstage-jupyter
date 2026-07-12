@@ -356,7 +356,27 @@ def main():
         from langstage_core.agui import verify as _core_verify
         from langstage_jupyter.config import LabConfig
 
-        spec = str(LabConfig.resolve().agent_spec or "").strip()
+        cfg = LabConfig.resolve()
+        spec = str(cfg.agent_spec or "").strip()
+
+        # For the BUNDLED default agent (no explicit spec), do the same cheap credential
+        # preflight /health does (gh #60) BEFORE building the agent. The model is built
+        # lazily, so a missing provider key doesn't fail until the first API call — so
+        # core.verify() surfaces it as a raw provider TypeError that never names the
+        # variable. Name it here instead, so --verify and /health say the same thing about
+        # the same failure. A custom/BYO agent's credentials stay the operator's concern
+        # (matching /health scoping) and keep the full one-real-turn check below. (gh #66)
+        if not spec:
+            from langstage_jupyter import handlers
+
+            missing = handlers._missing_provider_key(str(cfg.model_name or "").strip())
+            if missing:
+                print(
+                    f"[fail] agent verification failed: {missing} is not set — the default "
+                    "agent's first turn would fail. Set it and re-run."
+                )
+                sys.exit(1)
+
         try:
             if spec:
                 from langstage_core import load_agent_spec

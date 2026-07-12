@@ -41,6 +41,22 @@ _PROVIDER_KEY_ENV = {
 }
 
 
+def _missing_provider_key(model_name: str) -> Optional[str]:
+    """The provider key ``model_name`` needs, if it is absent from the environment.
+
+    Pure over ``model_name`` (the provider is the part before ``:``). Shared by the
+    ``/health`` default-agent readiness check and the launcher's ``--verify`` preflight
+    so both surfaces name the *same* variable for the same failure, instead of one dumping
+    a raw provider auth error (gh #60, gh #66). Returns ``None`` when the provider is
+    unknown or the key is already set.
+    """
+    provider = model_name.split(":", 1)[0].lower() if ":" in model_name else ""
+    env_var = _PROVIDER_KEY_ENV.get(provider)
+    if env_var and not os.environ.get(env_var):
+        return env_var
+    return None
+
+
 def _missing_default_agent_key() -> Optional[str]:
     """The provider key the BUNDLED default agent needs, if it is absent.
 
@@ -55,12 +71,7 @@ def _missing_default_agent_key() -> Optional[str]:
 
     if config.AGENT_SPEC:  # a custom agent was configured -> not our concern
         return None
-    model_name = (getattr(config, "MODEL_NAME", "") or "").strip()
-    provider = model_name.split(":", 1)[0].lower() if ":" in model_name else ""
-    env_var = _PROVIDER_KEY_ENV.get(provider)
-    if env_var and not os.environ.get(env_var):
-        return env_var
-    return None
+    return _missing_provider_key((getattr(config, "MODEL_NAME", "") or "").strip())
 
 
 def _agent_readiness():
