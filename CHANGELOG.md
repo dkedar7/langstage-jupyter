@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.6.13 - 2026-07-12
+
+### Added
+- **`langstage-jupyter --check-connection` — a preflight for the MANUAL-config path (gh #67).**
+  The README's "Alternative: Manual Configuration" flow hands you two values that must match
+  JupyterLab's startup parameters (`LANGSTAGE_JUPYTER_SERVER_URL`, `LANGSTAGE_JUPYTER_TOKEN`),
+  but nothing confirmed they actually reach a running server — a typo, wrong port, or stale
+  token loaded fine and only surfaced mid-chat when a notebook tool call silently failed to
+  authenticate. The existing preflights don't cover it: `--verify` runs the agent in-process
+  and never opens an HTTP connection, and `--serve-check` boots its *own* ephemeral server with
+  a *freshly generated* token. `--check-connection` resolves the configured URL+token through
+  the normal config chain and GETs `{server_url}/api/status` (an authenticated endpoint, so it
+  actually exercises the token), printing a one-line verdict and exiting `0`/`1`. It names the
+  distinct failure modes — server **unreachable** vs. token **rejected (403)** — and reports the
+  Jupyter Server version on success. `--check-server` is an alias. Completes the preflight family
+  (`--verify` / `--serve-check` / `--check-connection`), closing the last "documented surface
+  with no verifier" gap.
+
 ## 0.6.12 - 2026-07-12
 
 ### Fixed
