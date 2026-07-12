@@ -39,6 +39,8 @@ Launcher options:
   --verify           Preflight the agent (run one real turn); exit 0/1. Then exit.
   --serve-check      Headless HTTP smoke test: boot the server extension, serve one
                      turn over /langstage-jupyter/chat, exit 0/1. Then exit.
+  --check-connection Manual-config preflight: verify LANGSTAGE_JUPYTER_SERVER_URL +
+                     LANGSTAGE_JUPYTER_TOKEN reach a running Jupyter; exit 0/1. Then exit.
   --version, -V      Print the langstage-jupyter version and exit.
   -h, --help         Show this message and exit.
 
@@ -288,6 +290,108 @@ def serve_check(agent_spec=None, *, boot_timeout=45.0, turn_timeout=60.0):
             proc.kill()
 
 
+# ── --check-connection: preflight the MANUAL-config Jupyter connection (gh #67) ──
+#
+# The one documented surface with no verifier. The README's "Alternative: Manual
+# Configuration" path hands the user two values they must get exactly right and warns
+# in bold that they "must match" JupyterLab's startup parameters — but nothing confirms
+# they actually reach a running, auth-matching server before the first chat. --verify
+# never opens an HTTP connection, and --serve-check boots its OWN server with a FRESH
+# token, so neither can catch a manual-config mismatch. This does.
+
+
+def _connection_verdict(server_url, *, status=None, server_version=None,
+                        unreachable=False, error=None):
+    """Reduce a ``/api/status`` probe to ``(exit_code, message)``.
+
+    Pure so the verdict logic is unit-testable without a live Jupyter (mirrors
+    ``_summarize_sse`` for ``--serve-check``). Exactly one outcome is supplied:
+
+    * ``unreachable=True`` — connection refused / DNS failure / timeout,
+    * ``status=<int>``     — the HTTP status ``/api/status`` returned (it is
+      ``@web.authenticated``, so a wrong/missing token yields 403),
+    * ``error=<str>``      — some other client-side failure.
+
+    Names the two distinct failure modes the enhancement is about — server
+    *unreachable* vs. token *rejected* — so triage is one glance, not a chat session.
+    """
+    if unreachable:
+        return 1, (
+            f"[fail] {server_url} unreachable — is a Jupyter server running there? "
+            "Check LANGSTAGE_JUPYTER_SERVER_URL and that `jupyter lab` is up."
+        )
+    if error is not None:
+        return 1, f"[fail] could not probe {server_url}: {error}"
+    if status in (401, 403):
+        return 1, (
+            f"[fail] {server_url} returned {status} — LANGSTAGE_JUPYTER_TOKEN does not match "
+            "the token JupyterLab was launched with (--IdentityProvider.token)."
+        )
+    if status == 200:
+        suffix = f" (Jupyter Server {server_version})" if server_version else ""
+        return 0, f"[ ok ] reached {server_url} — token accepted{suffix}"
+    return 1, f"[fail] {server_url} returned unexpected HTTP {status}"
+
+
+def check_connection(*, timeout=5.0):
+    """Confirm the configured URL+token reach a running, auth-matching Jupyter (gh #67).
+
+    Resolve ``LANGSTAGE_JUPYTER_SERVER_URL`` + ``LANGSTAGE_JUPYTER_TOKEN`` through the
+    normal config chain (env / ``langstage.toml``, canonical-wins) and GET
+    ``{server_url}/api/status`` with the token. ``/api/status`` is ``@web.authenticated``,
+    so this actually exercises the token — the load-bearing check the "must match"
+    invariant needs. Prints a one-line verdict and returns ``0``/``1``.
+
+    Unlike ``--serve-check`` (which boots its own ephemeral server with a freshly
+    generated token), this tests the user's *configured* values against an
+    *already-running* server — the manual-config mismatch the other preflights can't see.
+    """
+    import json
+    import urllib.error
+    import urllib.request
+
+    from langstage_jupyter.config import LabConfig
+
+    cfg = LabConfig.resolve()
+    server_url = str(cfg.jupyter_server_url or "").strip().rstrip("/")
+    token = str(cfg.jupyter_token or "").strip()
+
+    if not server_url:
+        print("[fail] LANGSTAGE_JUPYTER_SERVER_URL is not set — nothing to check.")
+        return 1
+
+    def _get(path):
+        req = urllib.request.Request(
+            f"{server_url}{path}",
+            headers={"Authorization": f"token {token}"} if token else {},
+        )
+        return urllib.request.urlopen(req, timeout=timeout)
+
+    try:
+        status = _get("/api/status").getcode()
+    except urllib.error.HTTPError as e:
+        code, message = _connection_verdict(server_url, status=e.code)
+        print(message)
+        return code
+    except (urllib.error.URLError, ConnectionError, OSError):
+        # Connection refused / DNS / timeout — the server isn't reachable at that URL.
+        code, message = _connection_verdict(server_url, unreachable=True)
+        print(message)
+        return code
+
+    # Token accepted. Best-effort: enrich the verdict with the server version from the
+    # unauthenticated /api endpoint (/api/status doesn't carry it). Never fail on this.
+    version = None
+    try:
+        version = json.loads(_get("/api").read()).get("version")
+    except Exception:  # noqa: BLE001 - version is cosmetic
+        pass
+
+    code, message = _connection_verdict(server_url, status=status, server_version=version)
+    print(message)
+    return code
+
+
 def main():
     """Main launcher function."""
     # Parse command line arguments
@@ -356,7 +460,27 @@ def main():
         from langstage_core.agui import verify as _core_verify
         from langstage_jupyter.config import LabConfig
 
-        spec = str(LabConfig.resolve().agent_spec or "").strip()
+        cfg = LabConfig.resolve()
+        spec = str(cfg.agent_spec or "").strip()
+
+        # For the BUNDLED default agent (no explicit spec), do the same cheap credential
+        # preflight /health does (gh #60) BEFORE building the agent. The model is built
+        # lazily, so a missing provider key doesn't fail until the first API call — so
+        # core.verify() surfaces it as a raw provider TypeError that never names the
+        # variable. Name it here instead, so --verify and /health say the same thing about
+        # the same failure. A custom/BYO agent's credentials stay the operator's concern
+        # (matching /health scoping) and keep the full one-real-turn check below. (gh #66)
+        if not spec:
+            from langstage_jupyter import handlers
+
+            missing = handlers._missing_provider_key(str(cfg.model_name or "").strip())
+            if missing:
+                print(
+                    f"[fail] agent verification failed: {missing} is not set — the default "
+                    "agent's first turn would fail. Set it and re-run."
+                )
+                sys.exit(1)
+
         try:
             if spec:
                 from langstage_core import load_agent_spec
@@ -383,6 +507,13 @@ def main():
     # Defaults to the keyless demo agent (CI-safe); honors -a for a real agent.
     if "--serve-check" in args or "--smoke" in args:
         sys.exit(serve_check(agent_spec))
+
+    # --check-connection: the MANUAL-config connection preflight (gh #67). Confirm the
+    # configured LANGSTAGE_JUPYTER_SERVER_URL + LANGSTAGE_JUPYTER_TOKEN actually reach a
+    # running, auth-matching Jupyter — the one "must match" invariant with no verifier
+    # (--verify never opens HTTP; --serve-check boots its own server with a fresh token).
+    if "--check-connection" in args or "--check-server" in args:
+        sys.exit(check_connection())
 
     if agent_spec:
         print(f"Agent spec: {agent_spec}")

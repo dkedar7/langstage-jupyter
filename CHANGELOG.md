@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.6.13 - 2026-07-12
+
+### Added
+- **`langstage-jupyter --check-connection` — a preflight for the MANUAL-config path (gh #67).**
+  The README's "Alternative: Manual Configuration" flow hands you two values that must match
+  JupyterLab's startup parameters (`LANGSTAGE_JUPYTER_SERVER_URL`, `LANGSTAGE_JUPYTER_TOKEN`),
+  but nothing confirmed they actually reach a running server — a typo, wrong port, or stale
+  token loaded fine and only surfaced mid-chat when a notebook tool call silently failed to
+  authenticate. The existing preflights don't cover it: `--verify` runs the agent in-process
+  and never opens an HTTP connection, and `--serve-check` boots its *own* ephemeral server with
+  a *freshly generated* token. `--check-connection` resolves the configured URL+token through
+  the normal config chain and GETs `{server_url}/api/status` (an authenticated endpoint, so it
+  actually exercises the token), printing a one-line verdict and exiting `0`/`1`. It names the
+  distinct failure modes — server **unreachable** vs. token **rejected (403)** — and reports the
+  Jupyter Server version on success. `--check-server` is an alias. Completes the preflight family
+  (`--verify` / `--serve-check` / `--check-connection`), closing the last "documented surface
+  with no verifier" gap.
+
+## 0.6.12 - 2026-07-12
+
+### Fixed
+- **`--verify` on the bundled default agent with no `ANTHROPIC_API_KEY` now names the
+  missing variable instead of dumping a raw provider `TypeError` (gh #66).** The README
+  advertises `--verify` as the preflight that "catches a bad API key"; but the default
+  agent's model is built lazily, so a missing key didn't fail until the first API call —
+  and `core.verify()` (provider-agnostic) surfaced it as `TypeError: Could not resolve
+  authentication method...`, which never mentions the key. The launcher already knows this
+  branch is the default agent, so `--verify` now does the same cheap credential preflight
+  `/health` does (gh #60) *before* building it, short-circuiting with `ANTHROPIC_API_KEY is
+  not set — the default agent's first turn would fail. Set it and re-run.` The two
+  preflights (`--verify` and the sidebar/`/health`) now say the same thing about the same
+  failure. A custom/BYO agent (`-a`/spec) is unchanged — its credentials stay the
+  operator's concern and it keeps the full one-real-turn check. Shares the provider-key
+  lookup with `/health` via a new `handlers._missing_provider_key(model_name)` helper.
+
 ## 0.6.11 - 2026-07-09
 
 ### Fixed

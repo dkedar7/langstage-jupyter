@@ -100,13 +100,14 @@ langstage-jupyter --demo
 langstage-jupyter --show-config
 ```
 
-### Preflight checks (`--verify`, `--serve-check`)
+### Preflight checks (`--verify`, `--serve-check`, `--check-connection`)
 
-Two headless, no-browser preflights that exit `0`/`1` — handy in CI or before a deploy:
+Three headless, no-browser preflights that exit `0`/`1` — handy in CI or before a deploy:
 
 ```bash
 # Preflight the AGENT OBJECT: load the configured (or --demo) agent and run one real
-# turn through it. Catches a bad API key / broken tool / non-runnable graph.
+# turn through it. Catches a bad API key / broken tool / non-runnable graph. (For the
+# default agent with no key it now names the missing variable, e.g. ANTHROPIC_API_KEY.)
 langstage-jupyter --verify
 
 # Preflight the SERVED ENDPOINT: boot the server extension, poll /langstage-jupyter/health
@@ -115,7 +116,29 @@ langstage-jupyter --verify
 # (it never touches HTTP). Defaults to the keyless demo agent; add -a to test a real one.
 langstage-jupyter --serve-check
 langstage-jupyter -a my_agent.py:graph --serve-check
+
+# Preflight the MANUAL-CONFIG CONNECTION: confirm the configured
+# LANGSTAGE_JUPYTER_SERVER_URL + LANGSTAGE_JUPYTER_TOKEN actually reach a running,
+# auth-matching Jupyter (GET {url}/api/status with the token). Only meaningful for the
+# manual-config flow below — the launcher auto-manages these values. (--check-server alias.)
+langstage-jupyter --check-connection
 ```
+
+`--check-connection` names the distinct failure modes:
+
+```console
+$ langstage-jupyter --check-connection
+[ ok ] reached http://localhost:8888 — token accepted (Jupyter Server 2.20.0)
+
+# wrong port / server not up:
+[fail] http://localhost:8888 unreachable — is a Jupyter server running there? ...
+
+# URL right, token wrong (a stale token, a drifted --IdentityProvider.token):
+[fail] http://localhost:8888 returned 403 — LANGSTAGE_JUPYTER_TOKEN does not match ...
+```
+
+Unlike `--serve-check` (which boots its *own* ephemeral server with a *fresh* token),
+`--check-connection` tests your *configured* URL+token against an *already-running* server.
 
 The extension serves its REST/SSE routes under `/<base_url>langstage-jupyter/`:
 `health` (GET), `chat` (POST, SSE), `resume` (POST, SSE), `reload` (POST), `cancel` (POST).
@@ -142,6 +165,15 @@ jupyter lab --port 8888 --IdentityProvider.token=$LANGSTAGE_JUPYTER_TOKEN
 ```
 
 **Important:** The server URL and token must match between your environment variables and JupyterLab's startup parameters.
+
+Verify they do — before you start chatting — with the connection preflight:
+
+```bash
+langstage-jupyter --check-connection
+# [ ok ] reached http://localhost:8888 — token accepted (Jupyter Server 2.20.0)
+```
+
+It exits `0` when the configured `LANGSTAGE_JUPYTER_SERVER_URL` + `LANGSTAGE_JUPYTER_TOKEN` reach a running, auth-matching Jupyter, and `1` (naming the reason) when the server is unreachable or the token is rejected.
 
 ## Using Custom Agents
 

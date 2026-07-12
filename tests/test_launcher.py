@@ -7,7 +7,9 @@ import pytest
 from unittest.mock import Mock, patch, MagicMock
 from langstage_jupyter.launcher import (
     DEMO_AGENT_SPEC,
+    _connection_verdict,
     _summarize_sse,
+    check_connection,
     extract_agent_args,
     find_available_port,
     generate_token,
@@ -344,6 +346,67 @@ class TestVerifyFlag:
         assert exc.value.code == 0
         assert "agent verified" in capsys.readouterr().out
 
+    def test_verify_default_agent_missing_key_names_the_variable(self, monkeypatch, capsys):
+        # gh #66: with the BUNDLED default agent and no ANTHROPIC_API_KEY, --verify must
+        # name the missing variable — the same actionable message /health gives (gh #60) —
+        # instead of dumping a raw provider `TypeError: Could not resolve authentication
+        # method...`. It short-circuits BEFORE building the agent / calling core.verify.
+        monkeypatch.setenv("LANGSTAGE_AGENT_SPEC", "")  # default agent (no explicit spec)
+        monkeypatch.setenv("DEEPAGENT_AGENT_SPEC", "")
+        monkeypatch.delenv("LANGSTAGE_MODEL_NAME", raising=False)  # default anthropic model
+        monkeypatch.delenv("DEEPAGENT_MODEL_NAME", raising=False)
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        # If the short-circuit regressed, core.verify() would run a real turn — make that a
+        # hard failure rather than a slow/networked pass.
+        monkeypatch.setattr(
+            "langstage_core.agui.verify",
+            lambda *a, **k: pytest.fail("core.verify must not run when the default key is missing"),
+        )
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", "--verify"])
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 1
+        out = capsys.readouterr().out
+        assert "ANTHROPIC_API_KEY" in out       # names the exact variable...
+        assert "verification failed" in out     # ...as a verify verdict...
+        assert "TypeError" not in out           # ...not a raw provider stack string (gh #66)
+
+    def test_verify_default_agent_with_key_still_runs_the_real_turn(self, monkeypatch, capsys):
+        # The credential short-circuit is scoped to a MISSING key: when the key is present,
+        # --verify must fall through to the real one-turn check (core.verify), not skip it.
+        monkeypatch.setenv("LANGSTAGE_AGENT_SPEC", "")
+        monkeypatch.setenv("DEEPAGENT_AGENT_SPEC", "")
+        monkeypatch.delenv("LANGSTAGE_MODEL_NAME", raising=False)
+        monkeypatch.delenv("DEEPAGENT_MODEL_NAME", raising=False)
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-not-real")
+
+        # Stub the bundled default-agent module so the load path is hermetic — we're
+        # asserting the credential check falls through, not building the real model.
+        import sys
+        import types
+
+        fake_agent_mod = types.ModuleType("langstage_jupyter.agent")
+        fake_agent_mod.agent = object()  # sentinel graph handed to core.verify
+        monkeypatch.setitem(sys.modules, "langstage_jupyter.agent", fake_agent_mod)
+
+        ran = {}
+
+        class _Result:
+            ok = True
+            reason = "one turn completed cleanly"
+
+        def fake_verify(graph, *a, **k):
+            ran["graph"] = graph
+            return _Result()
+
+        monkeypatch.setattr("langstage_core.agui.verify", fake_verify)
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", "--verify"])
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 0
+        assert ran.get("graph") is fake_agent_mod.agent  # got PAST the key check to the turn
+        assert "agent verified" in capsys.readouterr().out
+
     def test_verify_broken_agent_fails_exit_one(self, monkeypatch, capsys, tmp_path):
         agent = tmp_path / "broken.py"
         agent.write_text(
@@ -506,3 +569,168 @@ class TestServeCheckServerSpawn:
 def test_serve_check_end_to_end_with_demo_agent():
     """The real thing: boot the server extension headlessly and serve one turn."""
     assert serve_check(DEMO_AGENT_SPEC) == 0
+
+
+class TestConnectionVerdict:
+    """_connection_verdict reduces a /api/status probe to (exit_code, message) — the
+    verdict logic behind --check-connection, unit-tested without a server (gh #67)."""
+
+    def test_ok_with_version(self):
+        code, msg = _connection_verdict("http://localhost:8888", status=200, server_version="2.20.0")
+        assert code == 0
+        assert msg.startswith("[ ok ]")
+        assert "token accepted" in msg
+        assert "2.20.0" in msg
+
+    def test_ok_without_version_omits_suffix(self):
+        code, msg = _connection_verdict("http://localhost:8888", status=200)
+        assert code == 0 and "token accepted" in msg
+        assert "Jupyter Server" not in msg  # no dangling empty parens
+
+    @pytest.mark.parametrize("status", [401, 403])
+    def test_auth_failure_names_the_token_var(self, status):
+        # URL right, token wrong — the distinct failure mode this enhancement is about.
+        code, msg = _connection_verdict("http://localhost:8888", status=status)
+        assert code == 1
+        assert str(status) in msg
+        assert "LANGSTAGE_JUPYTER_TOKEN" in msg
+        assert "IdentityProvider.token" in msg
+
+    def test_unreachable_names_the_url_and_server(self):
+        code, msg = _connection_verdict("http://localhost:8888", unreachable=True)
+        assert code == 1
+        assert "unreachable" in msg
+        assert "LANGSTAGE_JUPYTER_SERVER_URL" in msg
+
+    def test_unexpected_status_fails(self):
+        code, msg = _connection_verdict("http://localhost:8888", status=500)
+        assert code == 1 and "500" in msg
+
+    def test_client_error_is_reported(self):
+        code, msg = _connection_verdict("http://localhost:8888", error="boom")
+        assert code == 1 and "boom" in msg
+
+
+class _FakeResp:
+    def __init__(self, code, body=b"{}"):
+        self._code = code
+        self._body = body
+
+    def getcode(self):
+        return self._code
+
+    def read(self):
+        return self._body
+
+
+class TestCheckConnection:
+    """check_connection() resolves the configured URL+token and probes /api/status,
+    naming the distinct reachable/auth failure modes (gh #67)."""
+
+    def _configure(self, monkeypatch, url="http://localhost:8888", token="tok"):
+        monkeypatch.setenv("LANGSTAGE_JUPYTER_SERVER_URL", url)
+        monkeypatch.setenv("LANGSTAGE_JUPYTER_TOKEN", token)
+
+    def test_token_accepted_returns_zero_with_version(self, monkeypatch, capsys):
+        self._configure(monkeypatch)
+        import urllib.request
+
+        def fake_urlopen(req, timeout=None):
+            if req.full_url.endswith("/api/status"):
+                # the token actually reaches an authenticated endpoint
+                assert req.get_header("Authorization") == "token tok"
+                return _FakeResp(200)
+            return _FakeResp(200, b'{"version": "2.20.0"}')  # /api version enrichment
+
+        monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+        assert check_connection() == 0
+        out = capsys.readouterr().out
+        assert "[ ok ]" in out and "2.20.0" in out
+
+    def test_wrong_token_returns_403(self, monkeypatch, capsys):
+        self._configure(monkeypatch, token="wrong")
+        import urllib.error
+        import urllib.request
+
+        def fake_urlopen(req, timeout=None):
+            raise urllib.error.HTTPError(req.full_url, 403, "Forbidden", {}, None)
+
+        monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+        assert check_connection() == 1
+        out = capsys.readouterr().out
+        assert "403" in out and "LANGSTAGE_JUPYTER_TOKEN" in out
+
+    def test_unreachable_returns_one(self, monkeypatch, capsys):
+        self._configure(monkeypatch)
+        import urllib.error
+        import urllib.request
+
+        def fake_urlopen(req, timeout=None):
+            raise urllib.error.URLError("Connection refused")
+
+        monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+        assert check_connection() == 1
+        assert "unreachable" in capsys.readouterr().out
+
+    def test_version_enrichment_failure_never_fails_the_check(self, monkeypatch, capsys):
+        # The optional /api version fetch must not turn a token-accepted result into a fail.
+        self._configure(monkeypatch)
+        import urllib.error
+        import urllib.request
+
+        def fake_urlopen(req, timeout=None):
+            if req.full_url.endswith("/api/status"):
+                return _FakeResp(200)
+            raise urllib.error.URLError("no /api")  # version enrichment blows up
+
+        monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+        assert check_connection() == 0
+        out = capsys.readouterr().out
+        assert "[ ok ]" in out and "Jupyter Server" not in out
+
+    def test_missing_server_url_fails_fast(self, monkeypatch, capsys):
+        # An empty URL can't be checked — name the var rather than throwing.
+        monkeypatch.setenv("LANGSTAGE_JUPYTER_SERVER_URL", "")
+        monkeypatch.setenv("DEEPAGENT_JUPYTER_SERVER_URL", "")
+        # LabConfig has a non-empty default jupyter_server_url, so force the resolved value
+        # empty to exercise the guard.
+        from langstage_jupyter import config as _config
+
+        class _Cfg:
+            jupyter_server_url = ""
+            jupyter_token = "tok"
+
+        monkeypatch.setattr(_config.LabConfig, "resolve", classmethod(lambda cls, *a, **k: _Cfg()))
+        assert check_connection() == 1
+        assert "LANGSTAGE_JUPYTER_SERVER_URL is not set" in capsys.readouterr().out
+
+
+class TestCheckConnectionRouting:
+    """main() routes --check-connection / --check-server to check_connection() (gh #67)."""
+
+    @pytest.mark.parametrize("flag", ["--check-connection", "--check-server"])
+    def test_flag_calls_check_connection_and_exits_with_its_code(self, flag, monkeypatch):
+        called = {}
+
+        def fake_check(**kw):
+            called["hit"] = True
+            return 0
+
+        monkeypatch.setattr("langstage_jupyter.launcher.check_connection", fake_check)
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", flag])
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 0
+        assert called.get("hit") is True  # routed here, not to jupyter lab
+
+    def test_nonzero_code_propagates(self, monkeypatch):
+        monkeypatch.setattr("langstage_jupyter.launcher.check_connection", lambda **kw: 1)
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", "--check-connection"])
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 1
+
+    def test_help_lists_check_connection(self, monkeypatch, capsys):
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", "--help"])
+        main()
+        assert "--check-connection" in capsys.readouterr().out
