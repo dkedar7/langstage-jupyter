@@ -100,6 +100,19 @@ langstage-jupyter --demo
 langstage-jupyter --show-config
 ```
 
+**Running several sessions at once:** just launch the command again with a different agent — each
+session is its own process, picks the next free port (scanning `8888-8987`), gets its own token,
+and its notebook tools only ever talk to its own Jupyter server, so sessions don't interfere:
+
+```bash
+langstage-jupyter -a agent_a.py:graph    # -> localhost:8888
+langstage-jupyter -a agent_b.py:graph    # -> localhost:8889
+```
+
+Widen the scan with `LANGSTAGE_JUPYTER_PORT_ATTEMPTS` (default 100), or pin a port with `--port`.
+Note that two sessions launched from the **same directory** serve the same notebooks on disk —
+launch from different directories if you want separate workspaces.
+
 ### Preflight checks (`--verify`, `--serve-check`, `--check-connection`)
 
 Three headless, no-browser preflights that exit `0`/`1` — handy in CI or before a deploy:

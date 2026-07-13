@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.15 - 2026-07-13
+
+### Changed
+- **Port auto-detection now scans 100 ports instead of 10, so you can run many concurrent
+  sessions.** `find_available_port()` probed only 8888-8897, which is effectively a cap on how
+  many `langstage-jupyter` sessions can run side by side (each takes the next free port) — an
+  11th concurrent session failed outright with "Could not find available port" rather than simply
+  moving up. The window is now **8888-8987** by default and configurable via
+  `LANGSTAGE_JUPYTER_PORT_ATTEMPTS`; `--port` still pins one explicitly. The exhaustion error now
+  reports the exact range tried (it was off by one) and tells you how to fix it.
+
+  Sessions are otherwise fully isolated: each launcher is its own process with its own port,
+  token, agent spec and kernels, and the notebook tools only ever talk to their own Jupyter
+  server. (Two sessions launched from the *same* directory do share that directory's notebooks
+  on disk — launch from different directories if you want separate workspaces.)
+
 ## 0.6.14 - 2026-07-13
 
 ### Fixed

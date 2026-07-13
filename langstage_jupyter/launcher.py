@@ -101,8 +101,38 @@ def extract_agent_args(args):
     return agent_spec, demo, remaining
 
 
-def find_available_port(start_port=8888, max_attempts=10):
-    """Find an available port starting from start_port."""
+#: How many consecutive ports auto-detection probes, starting at 8888.
+#: This is effectively the cap on concurrently-running `langstage-jupyter`
+#: sessions (each takes the next free port). It used to be 10, so an 11th
+#: concurrent session failed outright instead of just moving up a port.
+DEFAULT_PORT_ATTEMPTS = 100
+
+#: Env var to widen (or narrow) that window.
+PORT_ATTEMPTS_ENV = "LANGSTAGE_JUPYTER_PORT_ATTEMPTS"
+
+
+def _port_attempts():
+    """Resolved scan width. Garbage or non-positive values fall back to the default."""
+    raw = os.getenv(PORT_ATTEMPTS_ENV)
+    if raw:
+        try:
+            n = int(raw)
+        except ValueError:
+            return DEFAULT_PORT_ATTEMPTS
+        if n > 0:
+            return n
+    return DEFAULT_PORT_ATTEMPTS
+
+
+def find_available_port(start_port=8888, max_attempts=None):
+    """Find an available port starting from start_port.
+
+    Scans ``max_attempts`` consecutive ports — 100 by default (8888-8987), so you
+    can run ~100 concurrent sessions before auto-detection gives up. Raise or lower
+    it with ``LANGSTAGE_JUPYTER_PORT_ATTEMPTS``, or pin a port with ``--port``.
+    """
+    if max_attempts is None:
+        max_attempts = _port_attempts()
     for port in range(start_port, start_port + max_attempts):
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -110,7 +140,12 @@ def find_available_port(start_port=8888, max_attempts=10):
                 return port
         except OSError:
             continue
-    raise RuntimeError(f"Could not find available port in range {start_port}-{start_port + max_attempts}")
+    last_port = start_port + max_attempts - 1
+    raise RuntimeError(
+        f"Could not find an available port in {start_port}-{last_port} "
+        f"({max_attempts} tried). Free one up, pass --port <PORT>, or widen the "
+        f"search with {PORT_ATTEMPTS_ENV}."
+    )
 
 
 def generate_token():

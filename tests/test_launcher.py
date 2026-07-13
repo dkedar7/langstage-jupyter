@@ -220,7 +220,7 @@ class TestFindAvailablePort:
             mock_sock.__exit__ = Mock(return_value=False)
             mock_socket.return_value = mock_sock
 
-            with pytest.raises(RuntimeError, match="Could not find available port"):
+            with pytest.raises(RuntimeError, match="Could not find an available port"):
                 find_available_port(start_port=8000, max_attempts=3)
 
     def test_default_parameters(self):
@@ -734,3 +734,63 @@ class TestCheckConnectionRouting:
         monkeypatch.setattr("sys.argv", ["langstage-jupyter", "--help"])
         main()
         assert "--check-connection" in capsys.readouterr().out
+
+
+# ── port auto-detection scans far enough for many concurrent sessions ──
+
+
+def _fake_socket_with_busy(monkeypatch, busy):
+    """Simulate a machine where `busy` ports are already taken."""
+    from langstage_jupyter import launcher as _l
+
+    class FakeSock:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def bind(self, addr):
+            if addr[1] in busy:
+                raise OSError("address in use")
+
+    monkeypatch.setattr(_l.socket, "socket", FakeSock)
+
+
+def test_find_available_port_scans_past_the_old_ten_port_window(monkeypatch):
+    # 11 busy ports: the old max_attempts=10 gave up here, so an 11th concurrent
+    # `langstage-jupyter` session failed outright instead of taking the next port.
+    _fake_socket_with_busy(monkeypatch, set(range(8888, 8899)))
+    assert find_available_port() == 8899
+
+
+def test_find_available_port_supports_many_concurrent_sessions(monkeypatch):
+    # ~100 sessions' worth of headroom by default (8888-8987).
+    _fake_socket_with_busy(monkeypatch, set(range(8888, 8987)))
+    assert find_available_port() == 8987
+
+
+def test_port_scan_width_is_configurable(monkeypatch):
+    monkeypatch.setenv("LANGSTAGE_JUPYTER_PORT_ATTEMPTS", "3")
+    _fake_socket_with_busy(monkeypatch, set(range(8888, 8891)))
+    with pytest.raises(RuntimeError) as e:
+        find_available_port()
+    assert "8888-8890" in str(e.value)  # exactly 3 tried, no off-by-one
+
+
+def test_exhausted_port_scan_tells_you_what_to_do(monkeypatch):
+    monkeypatch.setenv("LANGSTAGE_JUPYTER_PORT_ATTEMPTS", "2")
+    _fake_socket_with_busy(monkeypatch, set(range(8888, 8890)))
+    with pytest.raises(RuntimeError) as e:
+        find_available_port()
+    msg = str(e.value)
+    assert "--port" in msg and "LANGSTAGE_JUPYTER_PORT_ATTEMPTS" in msg
+
+
+def test_bad_port_attempts_env_falls_back_to_default(monkeypatch):
+    monkeypatch.setenv("LANGSTAGE_JUPYTER_PORT_ATTEMPTS", "not-a-number")
+    _fake_socket_with_busy(monkeypatch, set(range(8888, 8899)))
+    assert find_available_port() == 8899  # didn't crash, used the 100-wide default
