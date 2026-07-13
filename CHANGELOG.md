@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.6.14 - 2026-07-13
+
+### Fixed
+- **`create_notebook()` no longer destroys an existing notebook.** It wrote a fresh empty
+  notebook over the path unconditionally — no existence check — so calling it on a notebook that
+  already existed wiped every cell while cheerfully reporting "Created new notebook at ...". The
+  agent's own system prompt opens its worked example with `create_notebook()`, so this was on the
+  primary path and irrecoverable (no undo). It now refuses when the notebook exists and says so;
+  destroying it requires an explicit `overwrite=True`.
+- **Notebook reads and writes now use one authority, so they can't disagree.** Every tool *read*
+  with `nbformat.read()` — resolved against the **agent process's cwd** — but *saved* through the
+  Jupyter contents API — resolved against the **server's `root_dir`**. Whenever those differed
+  (exactly the documented manual-config flow) the agent read one file and wrote another: inserts
+  landed in the server copy while the cwd copy stayed empty, and `execute_cell` then crashed with
+  a raw `IndexError`. All notebook I/O now goes through a single `_load_notebook` / `_save_notebook`
+  pair anchored on the contents API (falling back to the filesystem together), so a read always
+  sees what the last write produced.
+- **`execute_cell` waits for the kernel before executing.** It called `start_channels()` and
+  executed immediately; the iopub subscription isn't established synchronously (ZMQ slow-joiner),
+  so a cold kernel's messages could be dropped — the tool saw no output, spun for the entire
+  `EXECUTE_TIMEOUT` (300s by default) and reported a false timeout with `execution_count=None`,
+  *even though the kernel had really run the code* (side effects applied, and the prompt then told
+  the agent to re-execute). A `kernel_info` round-trip + iopub drain now precedes the first execute.
+- **Tools return actionable errors instead of raising.** `execute_cell` indexed `cells[i]` with no
+  bounds check (raw `IndexError`), and a missing notebook raised `FileNotFoundError` from
+  `insert_code_cell` / `modify_cell` / `execute_cell` — none of which an agent can recover from,
+  while their siblings returned clean `Error: ...` strings. All tools now share one bounds/exists
+  check and report the same recoverable messages.
+- **A restarted kernel no longer wedges the agent.** The `kernel_clients` cache was never
+  invalidated, so restarting the kernel from the JupyterLab UI left a dead client behind and every
+  later execute hung to the timeout. Dead clients are now detected and replaced.
+
+### Changed
+- **`modify_cell` no longer deletes.** Passing `new_code=""` silently removed the cell — a
+  destructive sentinel the tool's name didn't advertise. It now returns an error pointing at the
+  new **`delete_cell(notebook_path, cell_index)`** tool.
+- **`insert_code_cell`'s `cell_idx` parameter is now `cell_index`**, matching every other tool
+  (the surface previously used two names for one concept).
+- `get_notebook_state` now includes a one-line preview of each cell, and a new **`read_cell`** tool
+  returns a cell's full source — so the agent can see what's in the notebook instead of relying on
+  remembering what it wrote.
+
+### Internal
+- The notebook tools moved from `agent.py` into **`langstage_jupyter/notebook_tools.py`**. They
+  previously sat in the module that builds the chat model at import, so reaching them required an
+  API key — which is why they had **no tests at all**. They now import standalone and ship with 20.
+  The triplicated "save via API, else write to disk" block and the repeated load block collapse into
+  the two shared primitives. Re-exported from `agent.py` for backwards compatibility.
+
 ## 0.6.13 - 2026-07-12
 
 ### Added
