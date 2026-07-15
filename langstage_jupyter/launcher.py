@@ -153,6 +153,31 @@ def generate_token():
     return secrets.token_urlsafe(32)
 
 
+#: The token arguments `jupyter lab` accepts. ``--IdentityProvider.token`` is the
+#: modern name; ``--ServerApp.token`` is the documented alias. If the user passes
+#: either, the launcher must not inject its own or the two collide (gh #69).
+TOKEN_ARG_NAMES = ("--IdentityProvider.token", "--ServerApp.token")
+
+
+def _find_user_token(args):
+    """Return the token the user pinned via a jupyter-lab token arg, else ``None``.
+
+    Mirrors the ``--port`` scan (gh #40): recognizes both the space form
+    (``--IdentityProvider.token TOK``) and the equals form
+    (``--IdentityProvider.token=TOK``) for either accepted name. An explicitly
+    empty value (``--IdentityProvider.token=``, i.e. auth disabled) is a real
+    user choice and is returned as ``""`` — distinct from ``None`` (not supplied),
+    so the launcher respects "no token" and still doesn't inject its own.
+    """
+    for i, arg in enumerate(args):
+        for name in TOKEN_ARG_NAMES:
+            if arg == name and i + 1 < len(args):
+                return args[i + 1]
+            if arg.startswith(name + "="):
+                return arg.split("=", 1)[1]
+    return None
+
+
 # ── --serve-check: headless HTTP smoke test of the deployed extension ──
 #
 # The served route prefix the extension registers (handlers.setup_handlers).
@@ -588,13 +613,28 @@ def main():
         port = find_available_port()
         print(f"Auto-detected available port: {port}")
 
-    # Generate token (or use existing if set)
-    token = os.getenv('JUPYTER_TOKEN')
-    if not token:
-        token = generate_token()
-        print("Generated secure authentication token")
+    # Check if the user pinned an auth token themselves. --IdentityProvider.token
+    # (and its --ServerApp.token alias) is a standard `jupyter lab` argument the
+    # README advertises as supported and uses in its Manual-Config section. If the
+    # user supplies it we must NOT also inject our own, or jupyter_server sees the
+    # token twice and aborts with "token only accepts one value, got 2" — the token
+    # twin of the #40 --port duplicate crash. Detect it, respect the user's value,
+    # and wire it through to the agent below. (gh #69)
+    user_token = _find_user_token(args)
+
+    # Resolve the auth token. Precedence: a user-pinned --IdentityProvider.token /
+    # --ServerApp.token (respected as-is and NOT re-injected — see below), then
+    # JUPYTER_TOKEN from the env, then a freshly generated secure token.
+    if user_token is not None:
+        token = user_token
+        print("Using user-specified token (--IdentityProvider.token/--ServerApp.token)")
     else:
-        print("Using existing JUPYTER_TOKEN from environment")
+        token = os.getenv('JUPYTER_TOKEN')
+        if not token:
+            token = generate_token()
+            print("Generated secure authentication token")
+        else:
+            print("Using existing JUPYTER_TOKEN from environment")
 
     # Determine server URL
     # Use localhost for security (only local connections)
@@ -628,8 +668,11 @@ def main():
     if user_port is None:
         jupyter_args.extend(['--port', str(port)])
 
-    # Add token
-    jupyter_args.extend(['--IdentityProvider.token', token])
+    # Inject our token only when the user didn't pin one themselves — otherwise
+    # jupyter_server sees the token twice and aborts (gh #69, the token twin of #40).
+    # The user's own --IdentityProvider.token/--ServerApp.token rides through in `args`.
+    if user_token is None:
+        jupyter_args.extend(['--IdentityProvider.token', token])
 
     # Add any user-provided arguments
     jupyter_args.extend(args)

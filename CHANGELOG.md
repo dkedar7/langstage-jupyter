@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.6.16 - 2026-07-14
+
+### Fixed
+- **Pinning the auth token no longer crashes the launcher (gh #69).** The launcher
+  *unconditionally* injected its own `--IdentityProvider.token <auto>` before appending your
+  pass-through args, so passing a token yourself — `--IdentityProvider.token=...` (or the
+  `--ServerApp.token=` alias), a standard `jupyter lab` argument the README advertises as
+  supported and uses in its Manual-Config section — made jupyter_server see the token twice and
+  abort with `ValueError: token only accepts one value, got 2`, naming a value you never typed.
+  The server never came up. This was the untreated token twin of the already-fixed `--port`
+  duplicate (gh #40): the launcher now detects a user-supplied token, respects it (does **not**
+  inject its own), and wires that same value into `LANGSTAGE_JUPYTER_TOKEN` so the agent's
+  notebook tools authenticate against the server you launched. An explicitly empty
+  `--IdentityProvider.token=` (auth disabled) is honored too.
+
+### Added
+- **The agent can now author and edit markdown cells (gh #70).** The notebook toolset only ever
+  touched *code* cells — there was no way to insert a markdown cell, and `modify_cell` hard-refused
+  any non-code cell (`Error: Cell N is not a code cell`) — so the agent could write and run code
+  but could not add a title, a section header, or a paragraph of narrative, nor edit markdown the
+  user already wrote. The gap was silent and confusing because `get_notebook_state` **shows**
+  markdown cells to the agent, so the model would try to edit them and hit a dead end. Now:
+  - a new **`insert_markdown_cell(text, notebook_path, cell_index=-1)`** tool (the markdown twin of
+    `insert_code_cell`), registered in `NOTEBOOK_TOOLS` and documented in the agent's system prompt;
+  - **`modify_cell` now edits markdown cells too** — it replaces the source of code *and* markdown
+    cells (clearing outputs/execution count only for code). Its empty-string sentinel still refuses
+    to blank a cell, for markdown as well, pointing you at `delete_cell`.
+
 ## 0.6.15 - 2026-07-13
 
 ### Changed

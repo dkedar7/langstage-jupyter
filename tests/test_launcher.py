@@ -334,6 +334,84 @@ class TestPortHandling:
         assert calls["cmd"].count("--port") == 1  # exactly one, auto-detected
 
 
+class TestTokenHandling:
+    """A user-supplied token must not be duplicated by our injected one (gh #69),
+    the untreated token twin of the #40 --port duplicate crash."""
+
+    def _run_main(self, argv, monkeypatch):
+        calls = {}
+
+        def fake_run(cmd, env=None):
+            calls["cmd"] = cmd
+            calls["env"] = dict(env or {})
+            return MagicMock(returncode=0)
+
+        monkeypatch.setattr("langstage_jupyter.launcher.subprocess.run", fake_run)
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter"] + argv)
+        monkeypatch.delenv("JUPYTER_TOKEN", raising=False)
+        with pytest.raises(SystemExit):  # main() propagates the child's exit code (gh #62)
+            main()
+        return calls
+
+    def _token_value_count(self, cmd):
+        """How many times a token VALUE reaches jupyter lab — via either the
+        space form (`--IdentityProvider.token TOK`) or the equals form
+        (`--IdentityProvider.token=TOK` / `--ServerApp.token=TOK`)."""
+        names = ("--IdentityProvider.token", "--ServerApp.token")
+        n = 0
+        for i, a in enumerate(cmd):
+            if a in names and i + 1 < len(cmd):
+                n += 1
+            elif any(a.startswith(name + "=") for name in names):
+                n += 1
+        return n
+
+    def test_no_token_arg_auto_injects_one(self, monkeypatch):
+        # Baseline: with no user token, the launcher injects exactly one.
+        calls = self._run_main(["--no-browser"], monkeypatch)
+        assert self._token_value_count(calls["cmd"]) == 1
+        assert "--IdentityProvider.token" in calls["cmd"]
+
+    def test_user_identityprovider_token_equals_not_duplicated(self, monkeypatch):
+        # gh #69: the exact repro — a pinned token via the equals form must NOT be
+        # doubled, or jupyter_server aborts "token only accepts one value, got 2".
+        calls = self._run_main(
+            ["--no-browser", "--IdentityProvider.token=MyPinnedToken"], monkeypatch
+        )
+        assert self._token_value_count(calls["cmd"]) == 1  # exactly one, the user's
+        assert "--IdentityProvider.token=MyPinnedToken" in calls["cmd"]
+        # ...and the launcher did NOT add its own space-form token on top.
+        assert "--IdentityProvider.token" not in calls["cmd"]
+
+    def test_user_identityprovider_token_space_form_not_duplicated(self, monkeypatch):
+        calls = self._run_main(
+            ["--no-browser", "--IdentityProvider.token", "SpaceTok"], monkeypatch
+        )
+        assert self._token_value_count(calls["cmd"]) == 1
+        # the user's space-form pair rides through untouched, and only once
+        assert calls["cmd"].count("--IdentityProvider.token") == 1
+        assert "SpaceTok" in calls["cmd"]
+
+    def test_serverapp_token_alias_not_duplicated(self, monkeypatch):
+        # The --ServerApp.token alias gets the same treatment.
+        calls = self._run_main(
+            ["--no-browser", "--ServerApp.token=AliasTok"], monkeypatch
+        )
+        assert self._token_value_count(calls["cmd"]) == 1
+        assert "--IdentityProvider.token" not in calls["cmd"]  # ours not injected
+        assert "--ServerApp.token=AliasTok" in calls["cmd"]
+
+    def test_user_token_is_wired_to_the_agent_env(self, monkeypatch):
+        # The agent's notebook tools authenticate with LANGSTAGE_JUPYTER_TOKEN; when
+        # the user pins the server's token, that env must carry the SAME value or the
+        # tools would 403 against the very server they launched.
+        calls = self._run_main(
+            ["--no-browser", "--IdentityProvider.token=MyPinnedToken"], monkeypatch
+        )
+        assert calls["env"]["LANGSTAGE_JUPYTER_TOKEN"] == "MyPinnedToken"
+        assert calls["env"]["DEEPAGENT_JUPYTER_TOKEN"] == "MyPinnedToken"
+
+
 class TestVerifyFlag:
     """--verify preflights the agent with one real turn via core.verify (ADR 0004)."""
 

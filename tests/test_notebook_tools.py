@@ -178,6 +178,72 @@ def test_modify_cell_clears_stale_outputs(offline, ws):
     assert c.source == "x = 2" and c.outputs == [] and c.execution_count is None
 
 
+# ── markdown authoring (gh #70) ──────────────────────────────────────
+
+
+def test_insert_markdown_cell_appends_a_markdown_cell(offline, ws):
+    nt.create_notebook("md.ipynb")
+    out = nt.insert_markdown_cell("# My Analysis\nIntro prose.", "md.ipynb")
+    assert "Inserted markdown cell at index 0" in out
+    cell = _cells("md.ipynb")[0]
+    assert cell.cell_type == "markdown"
+    assert cell.source == "# My Analysis\nIntro prose."
+
+
+def test_insert_markdown_cell_at_index_interleaves_with_code(offline, ws):
+    # The core Jupyter workflow: a markdown header above a code cell.
+    nt.create_notebook("mix.ipynb")
+    nt.insert_code_cell("import pandas as pd", "mix.ipynb")
+    nt.insert_markdown_cell("# Title", "mix.ipynb", 0)  # insert BEFORE the code
+    cells = _cells("mix.ipynb")
+    assert [c.cell_type for c in cells] == ["markdown", "code"]
+    assert cells[0].source == "# Title"
+
+
+def test_insert_markdown_cell_missing_notebook_is_an_error_string(offline, ws):
+    out = nt.insert_markdown_cell("# hi", "nope.ipynb")
+    assert isinstance(out, str) and out.startswith("Error:") and "not found" in out.lower()
+
+
+def test_insert_markdown_cell_out_of_range_index(offline, ws):
+    nt.create_notebook("r.ipynb")
+    out = nt.insert_markdown_cell("# hi", "r.ipynb", 5)
+    assert "out of range" in out
+
+
+def test_modify_cell_can_edit_a_markdown_cell(offline, ws):
+    # gh #70: modify_cell used to hard-refuse any non-code cell, so a title/header
+    # a user already wrote could not be edited. It must now replace markdown source.
+    nt.create_notebook("edit.ipynb")
+    nt.insert_markdown_cell("# Old Title", "edit.ipynb")
+    out = nt.modify_cell("edit.ipynb", 0, "# Revised Title")
+    assert "Modified cell at index 0" in out
+    cell = _cells("edit.ipynb")[0]
+    assert cell.cell_type == "markdown"  # type preserved
+    assert cell.source == "# Revised Title"
+
+
+def test_modify_cell_empty_string_still_refuses_for_markdown(offline, ws):
+    # The empty-string sentinel must carry over to markdown — an empty edit must
+    # not silently blank/delete the cell (gh #70).
+    nt.create_notebook("s.ipynb")
+    nt.insert_markdown_cell("# Keep", "s.ipynb")
+    out = nt.modify_cell("s.ipynb", 0, "")
+    assert out.startswith("Error:") and "delete_cell" in out
+    assert _cells("s.ipynb")[0].source == "# Keep"
+
+
+def test_markdown_tools_are_registered_and_state_counts_them(offline, ws):
+    # The tool must actually be handed to the agent, and get_notebook_state (which
+    # already previews markdown) must reflect an inserted markdown cell.
+    assert nt.insert_markdown_cell in nt.NOTEBOOK_TOOLS
+    nt.create_notebook("c.ipynb")
+    nt.insert_markdown_cell("# Heading", "c.ipynb")
+    state = nt.get_notebook_state("c.ipynb")
+    assert "Markdown cells: 1" in state
+    assert "(markdown) # Heading" in state
+
+
 def test_read_cell_returns_full_source(offline, ws):
     nt.create_notebook("r.ipynb")
     nt.insert_code_cell("line1\nline2", "r.ipynb")
