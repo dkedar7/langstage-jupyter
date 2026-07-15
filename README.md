@@ -211,7 +211,7 @@ agent = create_deep_agent(
     model="anthropic:claude-sonnet-4-20250514",
     backend=FilesystemBackend(root_dir=workspace, virtual_mode=True),
     checkpointer=MemorySaver(),
-    tools=[...your_custom_tools...]
+    tools=[],  # add your custom tools here, e.g. [my_tool, another_tool]
 )
 ```
 
