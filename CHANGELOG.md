@@ -1,6 +1,24 @@
 # Changelog
 
-## 0.6.16 - 2026-07-14
+## 0.6.17 - 2026-07-15
+
+### Fixed
+- **The README's "Creating a Custom Agent" example is now valid, runnable Python (gh #72).**
+  The custom-agent block — the file the docs tell you to save as `my_agent.py` — carried a
+  placeholder line that is a `SyntaxError`:
+
+      tools=[...your_custom_tools...]
+
+  `[...your_custom_tools...]` does not parse, so a first-time user who copied the block verbatim,
+  pointed `LANGSTAGE_AGENT_SPEC=./my_agent.py:agent` at it, and launched got an agent that **never
+  loaded** (`[fail] could not load agent: invalid syntax. Perhaps you forgot a comma?`, 🔴
+  `agent_not_loaded`) — a parse error that never pointed at the placeholder. Since the README
+  frames the block as a complete file, the placeholder read as real code, and this sat on the
+  headline "bring your own agent" onramp. The line is now the valid, self-documenting
+  `tools=[],  # add your custom tools here, e.g. [my_tool, another_tool]`, so the documented file
+  loads as-is and comes up as a langstage-jupyter agent. A new `tests/test_readme_examples.py`
+  lifts the example straight out of README.md, compiles it, and loads it through the same
+  `file.py:attr` host loader the launcher's `-a` uses — so the block can't silently regress.
 
 ### Fixed
 - **Pinning the auth token no longer crashes the launcher (gh #69).** The launcher
