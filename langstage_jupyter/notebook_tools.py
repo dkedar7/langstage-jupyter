@@ -338,12 +338,49 @@ def insert_code_cell(
     return f"Inserted code cell at index {cell_index} in {notebook_path}"
 
 
+def insert_markdown_cell(
+    text: Annotated[str, "Markdown text for the cell"],
+    notebook_path: Annotated[str, "Notebook filename"],
+    cell_index: Annotated[int, "Index to insert at (-1 appends at the end)"] = -1,
+) -> str:
+    """Insert a new markdown cell into an existing notebook.
+
+    The markdown twin of :func:`insert_code_cell` — for titles, section headers,
+    and the narrative prose that a notebook interleaves with its code. Markdown
+    cells are never executed, so there's no execute step after inserting one.
+    """
+    notebook_path = _norm(notebook_path)
+    try:
+        nb = _load_notebook(notebook_path)
+    except NotebookNotFound:
+        return (
+            f"Error: Notebook not found at {notebook_path}. "
+            "Create it first with create_notebook."
+        )
+
+    new_cell = nbformat.v4.new_markdown_cell(source=text)
+    if cell_index == -1:
+        nb.cells.append(new_cell)
+        cell_index = len(nb.cells) - 1
+    else:
+        if cell_index < 0 or cell_index > len(nb.cells):
+            return f"Error: Cell index {cell_index} out of range (0-{len(nb.cells)})"
+        nb.cells.insert(cell_index, new_cell)
+
+    _save_notebook(nb, notebook_path)
+    return f"Inserted markdown cell at index {cell_index} in {notebook_path}"
+
+
 def modify_cell(
     notebook_path: Annotated[str, "Notebook filename"],
     cell_index: Annotated[int, "Index of cell to modify"],
-    new_code: Annotated[str, "New code for the cell"],
+    new_code: Annotated[str, "New source for the cell (code or markdown)"],
 ) -> str:
-    """Replace a code cell's source (clearing its stale outputs/execution count).
+    """Replace a cell's source. Works on **code and markdown** cells alike.
+
+    For a code cell, the stale outputs/execution count are cleared. A markdown
+    cell has neither, so only its source is replaced (this is how you edit a
+    title, header, or paragraph — gh #70).
 
     Does **not** delete: an empty ``new_code`` used to silently remove the cell.
     Use :func:`delete_cell` to remove one.
@@ -363,11 +400,13 @@ def modify_cell(
         return err
 
     cell = nb.cells[cell_index]
-    if cell.cell_type != "code":
-        return f"Error: Cell {cell_index} is not a code cell"
     cell.source = new_code
-    cell.outputs = []
-    cell.execution_count = None
+    # Only code cells carry outputs / an execution count to invalidate; a markdown
+    # cell has neither, so the old code-only guard was the only thing blocking a
+    # markdown edit (gh #70).
+    if cell.cell_type == "code":
+        cell.outputs = []
+        cell.execution_count = None
 
     _save_notebook(nb, notebook_path)
     return f"Modified cell at index {cell_index} in {notebook_path}"
@@ -481,6 +520,7 @@ NOTEBOOK_TOOLS = [
     read_cell,
     create_notebook,
     insert_code_cell,
+    insert_markdown_cell,
     modify_cell,
     delete_cell,
     execute_cell,

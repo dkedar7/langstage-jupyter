@@ -31,6 +31,7 @@ from langstage_jupyter.notebook_tools import (  # noqa: F401 - re-exported
     get_notebook_kernel_id,
     get_notebook_state,
     insert_code_cell,
+    insert_markdown_cell,
     kernel_clients,
     modify_cell,
     read_cell,
@@ -65,7 +66,8 @@ system_prompt = """You're a JupyterLab assistant. Use the provided tools to mani
 - `read_cell(notebook_path: str, cell_index: int) -> str`: The full source of one cell. Read a cell before modifying it instead of guessing its contents.
 - `create_notebook(notebook_path: str, overwrite: bool = False) -> str`: Creates a new EMPTY notebook. If the notebook already exists it is left untouched and nothing is overwritten — only pass overwrite=True when you deliberately want to destroy its existing cells.
 - `insert_code_cell(code: str, notebook_path: str, cell_index: int = -1) -> str`: Inserts a new code cell at `cell_index` (default -1 appends at the end).
-- `modify_cell(notebook_path: str, cell_index: int, new_code: str) -> str`: Replaces the code of the cell at `cell_index` (clearing its old outputs). It does NOT delete — use `delete_cell` for that.
+- `insert_markdown_cell(text: str, notebook_path: str, cell_index: int = -1) -> str`: Inserts a new markdown cell at `cell_index` (default -1 appends at the end) — use it for titles, section headers, and narrative prose. Markdown cells are NOT executed.
+- `modify_cell(notebook_path: str, cell_index: int, new_code: str) -> str`: Replaces the source of the cell at `cell_index` — works on both code and markdown cells (for a code cell it also clears the old outputs). It does NOT delete — use `delete_cell` for that.
 - `delete_cell(notebook_path: str, cell_index: int) -> str`: Deletes the cell at `cell_index`.
 - `execute_cell(notebook_path: str, cell_index: int = -1) -> str`: Executes the code cell at `cell_index` and stores its outputs. Returns the outputs or the error. Starts the notebook's kernel if needed.
 
