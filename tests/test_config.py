@@ -110,6 +110,27 @@ class TestConfigConstants:
         assert config.DEBUG is False
         assert config.VIRTUAL_MODE is True
 
+    @pytest.mark.parametrize("var, const, default", [
+        ("LANGSTAGE_MODEL_TEMPERATURE", "MODEL_TEMPERATURE", 0.0),
+        ("LANGSTAGE_EXECUTE_TIMEOUT", "EXECUTE_TIMEOUT", 300.0),
+    ])
+    def test_malformed_numeric_env_does_not_break_import(
+        self, clean_env, mock_env, capsys, var, const, default
+    ):
+        """gh #75: a malformed numeric env var must not crash module import.
+
+        config.py resolves the config at import time (``_cfg = LabConfig.resolve()``),
+        so before the fix a non-numeric ``LANGSTAGE_MODEL_TEMPERATURE`` / ``_EXECUTE_TIMEOUT``
+        (here ``0,5`` — the European decimal comma from the issue) let a raw ValueError
+        escape and take down even a bare ``import langstage_jupyter``. It must now reload
+        cleanly, falling back to the default (parity with #42's malformed-TOML path)."""
+        mock_env(var, "0,5")
+        import importlib
+        from langstage_jupyter import config
+        importlib.reload(config)  # must NOT raise
+        assert getattr(config, const) == default
+        assert "malformed" in capsys.readouterr().err
+
     def test_environment_overrides(self, clean_env, mock_env):
         """Should override defaults with environment variables."""
         mock_env("DEEPAGENT_AGENT_MODULE", "custom.agent")
