@@ -216,6 +216,9 @@ tsconfig.tsbuildinfo
 # JupyterLab extension build outputs (already handled by Python packaging)
 *.bundled.js
 langstage_jupyter/labextension
+# Auto-generated at build time by hatchling from package.json (see [tool.hatch.build.hooks.version]);
+# its own header says not to track it. It was committed by mistake at a stale version.
+langstage_jupyter/_version.py
 .yarn/
 release.sh
 
