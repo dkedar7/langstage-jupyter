@@ -76,3 +76,75 @@ def test_describe_lists_var_names(isolated, tmp_path):
     assert "DEEPAGENT_JUPYTER_TOKEN" in text
     assert "jupyter.token" in text
     assert "DEEPAGENT_AGENT_SPEC" in text
+
+
+# ── gh #75: a malformed numeric env var must degrade gracefully, not crash ──
+#
+# Sibling of the already-fixed #42 (malformed langstage.toml). Before the fix,
+# a non-numeric LANGSTAGE_MODEL_TEMPERATURE / LANGSTAGE_EXECUTE_TIMEOUT let a raw
+# ValueError from float() escape resolve() and take down every entrypoint —
+# including a bare `import langstage_jupyter`, since config resolves at import
+# time. It must now fall back to the field default with a one-line stderr note
+# that names the offending variable + value (parity with #42's TOML path).
+
+# (canonical env var, field, expected default) for the two lenient-cast knobs.
+_NUMERIC_KNOBS = [
+    ("LANGSTAGE_MODEL_TEMPERATURE", "model_temperature", 0.0),
+    ("LANGSTAGE_EXECUTE_TIMEOUT", "execute_timeout", 300.0),
+]
+
+
+@pytest.mark.parametrize("var, field, default", _NUMERIC_KNOBS)
+@pytest.mark.parametrize("bad", ["abc", "0,5", "5m", "0.0.0", " "])
+def test_malformed_numeric_env_falls_back_to_default(
+    isolated, tmp_path, capsys, var, field, default, bad
+):
+    """A malformed numeric env value resolves to the default (no exception)."""
+    cfg = LabConfig.resolve(env={var: bad}, toml_start=tmp_path)  # must NOT raise
+    assert getattr(cfg, field) == default
+
+
+@pytest.mark.parametrize("var, field, default", _NUMERIC_KNOBS)
+def test_malformed_numeric_env_notes_the_variable_and_value(
+    isolated, tmp_path, capsys, var, field, default
+):
+    """The stderr note names the offending variable and the bad value it choked on."""
+    LabConfig.resolve(env={var: "abc"}, toml_start=tmp_path)
+    err = capsys.readouterr().err
+    assert "malformed" in err
+    assert var in err          # names the canonical LANGSTAGE_* variable
+    assert "abc" in err        # ...and the value that failed to parse
+    assert str(default) in err  # ...and the default it fell back to
+
+
+@pytest.mark.parametrize("var, field, default", _NUMERIC_KNOBS)
+def test_malformed_numeric_env_via_legacy_spelling(
+    isolated, tmp_path, capsys, var, field, default
+):
+    """The legacy DEEPAGENT_* spelling degrades identically (same caster)."""
+    legacy = var.replace("LANGSTAGE_", "DEEPAGENT_")
+    cfg = LabConfig.resolve(env={legacy: "abc"}, toml_start=tmp_path)  # must NOT raise
+    assert getattr(cfg, field) == default
+    assert "malformed" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("var, field, value", [
+    ("LANGSTAGE_MODEL_TEMPERATURE", "model_temperature", "0.7"),
+    ("LANGSTAGE_EXECUTE_TIMEOUT", "execute_timeout", "60"),
+])
+def test_valid_numeric_env_still_parses(isolated, tmp_path, capsys, var, field, value):
+    """A well-formed value still parses to a float, with no note printed."""
+    cfg = LabConfig.resolve(env={var: value}, toml_start=tmp_path)
+    assert getattr(cfg, field) == float(value)
+    assert "malformed" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("var, field, default", _NUMERIC_KNOBS)
+def test_unset_numeric_env_uses_default_without_note(
+    isolated, tmp_path, capsys, var, field, default
+):
+    """Unset (and empty, treated as unset) keeps the default and prints no note."""
+    for env in ({}, {var: ""}):
+        cfg = LabConfig.resolve(env=env, toml_start=tmp_path)
+        assert getattr(cfg, field) == default
+    assert "malformed" not in capsys.readouterr().err

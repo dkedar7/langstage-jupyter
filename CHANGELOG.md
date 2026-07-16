@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.6.18 - 2026-07-16
+
+### Fixed
+- **A malformed numeric env var no longer crashes every entrypoint with a raw `ValueError` (gh #75).**
+  A non-numeric `LANGSTAGE_MODEL_TEMPERATURE` or `LANGSTAGE_EXECUTE_TIMEOUT` (or their legacy
+  `DEEPAGENT_*` spellings) — e.g. `0,5` (the European decimal comma), `5m`, or `abc` — was coerced
+  with a bare `float()` inside `LabConfig.resolve()`. Because config resolves at **import time**
+  (`_cfg = LabConfig.resolve()` in `config.py`), the uncaught `ValueError` took down *every*
+  entrypoint — `--version`/`--help`/`--show-config`/`--demo`, the `deepagent-lab` alias, the
+  launcher, the Jupyter server extension, and even a bare `import langstage_jupyter` — with a
+  traceback rooted in `langstage_core/host/config.py` that never named the offending variable.
+  This was the untreated sibling of #42 (a malformed `langstage.toml`, already hardened), which
+  degrades gracefully to `note: ignoring malformed config …; using environment + defaults instead`.
+  The two numeric env casters are now **lenient**: a malformed value degrades to the field default
+  and prints a one-line stderr note that names the variable, the bad value, and the default it fell
+  back to (`note: ignoring malformed LANGSTAGE_MODEL_TEMPERATURE='0,5' (ValueError: …); using
+  default 0.0 instead.`) — so a typo in one advertised config knob can no longer brick library
+  import or the CLI. A well-formed value still parses; unset (and empty) still uses the default.
+
 ## 0.6.17 - 2026-07-15
 
 ### Fixed
