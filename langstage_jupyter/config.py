@@ -8,9 +8,10 @@ env+defaults view (no TOML) kept for back-compat with existing call sites
 (``agent.py``, ``agent_wrapper.py``).
 """
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, ClassVar, Optional
+from typing import Any, Callable, ClassVar, Optional, cast
 
 from langstage_core.host import HostConfig, load_toml_config  # noqa: F401  (re-exported for callers)
 
@@ -72,6 +73,46 @@ class LabConfig(HostConfig):
         "virtual_mode": "jupyter.virtual_mode",
         "execute_timeout": "jupyter.execute_timeout",
     }
+
+    @classmethod
+    def resolve(
+        cls,
+        *,
+        overrides: Optional[dict[str, Any]] = None,
+        toml_start: Optional[Path] = None,
+        env: Optional[dict[str, str]] = None,
+        use_toml: bool = True,
+    ) -> "LabConfig":
+        """Resolve config, ignoring malformed numeric environment values."""
+        clean_env = dict(os.environ if env is None else env)
+        numeric_env = (
+            ("LANGSTAGE_MODEL_TEMPERATURE", "DEEPAGENT_MODEL_TEMPERATURE"),
+            ("LANGSTAGE_EXECUTE_TIMEOUT", "DEEPAGENT_EXECUTE_TIMEOUT"),
+        )
+        for canonical, legacy in numeric_env:
+            used = canonical if clean_env.get(canonical) else legacy
+            value = clean_env.get(used)
+            if value in (None, ""):
+                continue
+            try:
+                float(value)
+            except (TypeError, ValueError):
+                print(
+                    f"note: ignoring malformed {used}={value!r}; "
+                    "using TOML or default instead.",
+                    file=sys.stderr,
+                )
+                clean_env.pop(canonical, None)
+                clean_env.pop(legacy, None)
+        return cast(
+            "LabConfig",
+            super().resolve(
+                overrides=overrides,
+                toml_start=toml_start,
+                env=clean_env,
+                use_toml=use_toml,
+            ),
+        )
 
 
 # Module-level constants derived from LabConfig, for call sites that read

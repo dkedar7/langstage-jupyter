@@ -48,6 +48,24 @@ def test_env_layer(isolated, tmp_path):
     assert cfg.agent_spec == "x.py:g"
 
 
+@pytest.mark.parametrize(
+    ("env_var", "field", "default"),
+    [
+        ("LANGSTAGE_MODEL_TEMPERATURE", "model_temperature", 0.0),
+        ("DEEPAGENT_MODEL_TEMPERATURE", "model_temperature", 0.0),
+        ("LANGSTAGE_EXECUTE_TIMEOUT", "execute_timeout", 300.0),
+        ("DEEPAGENT_EXECUTE_TIMEOUT", "execute_timeout", 300.0),
+    ],
+)
+def test_malformed_numeric_env_uses_default(
+    isolated, tmp_path, capsys, env_var, field, default
+):
+    cfg = LabConfig.resolve(env={env_var: "invalid"}, toml_start=tmp_path)
+
+    assert getattr(cfg, field) == default
+    assert env_var in capsys.readouterr().err
+
+
 def test_toml_layer(isolated, tmp_path):
     _toml(tmp_path,
           '[model]\nname = "anthropic:claude-3"\ntemperature = 0.3\n'
