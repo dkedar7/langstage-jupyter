@@ -367,10 +367,12 @@ class TestTokenHandling:
         return n
 
     def test_no_token_arg_auto_injects_one(self, monkeypatch):
-        # Baseline: with no user token, the launcher injects exactly one.
+        # Baseline: with no user token, the launcher injects exactly one — in the
+        # equals form, so a leading-`-` token can't be misparsed as a flag (gh #79).
         calls = self._run_main(["--no-browser"], monkeypatch)
         assert self._token_value_count(calls["cmd"]) == 1
-        assert "--IdentityProvider.token" in calls["cmd"]
+        assert any(a.startswith("--IdentityProvider.token=") for a in calls["cmd"])
+        assert "--IdentityProvider.token" not in calls["cmd"]  # never the space form
 
     def test_user_identityprovider_token_equals_not_duplicated(self, monkeypatch):
         # gh #69: the exact repro — a pinned token via the equals form must NOT be
@@ -410,6 +412,120 @@ class TestTokenHandling:
         )
         assert calls["env"]["LANGSTAGE_JUPYTER_TOKEN"] == "MyPinnedToken"
         assert calls["env"]["DEEPAGENT_JUPYTER_TOKEN"] == "MyPinnedToken"
+
+
+#: A token shaped exactly like one `secrets.token_urlsafe(32)` really produces
+#: ~1.6% of the time: base64url alphabet, leading `-`. (gh #79)
+LEADING_DASH_TOKEN = "-infrKxamplZtokenThatStartsWithDash1234567"
+
+
+def _traitlets_accepts(argv):
+    """Does the parser `jupyter lab` actually uses accept ``argv``?
+
+    JupyterLab parses its command line with traitlets' ``KVArgParseConfigLoader``
+    (an argparse loader), which is what emits
+    ``argument --IdentityProvider.token: expected one argument`` and exits 2 when a
+    value looks like a flag. Driving the real loader — rather than asserting on a
+    hand-rolled imitation — is what makes this regression test meaningful.
+    """
+    from traitlets.config.loader import KVArgParseConfigLoader
+
+    loader = KVArgParseConfigLoader(
+        argv=list(argv), aliases={}, flags={"no-browser": ({}, "no browser")}
+    )
+    try:
+        loader.load_config()
+    except SystemExit:  # argparse's parse error path
+        return False
+    return True
+
+
+class TestGeneratedTokenLeadingDash:
+    """The launcher's OWN generated token must never break its own launch (gh #79).
+
+    `secrets.token_urlsafe` uses the base64url alphabet, so ~1.57% of tokens start
+    with `-`. Emitted space-separated (`--IdentityProvider.token <tok>`), argparse
+    reads that value as another option flag and jupyter lab aborts before booting —
+    intermittent, ~1 in 64 launches, and it "works when you re-run it". Emitting the
+    equals form makes the value un-splittable.
+    """
+
+    def _run_main_with_token(self, argv, monkeypatch, token=LEADING_DASH_TOKEN):
+        calls = {}
+
+        def fake_run(cmd, env=None):
+            calls["cmd"] = cmd
+            calls["env"] = dict(env or {})
+            return MagicMock(returncode=0)
+
+        # Force the exact random draw that triggers the bug — deterministically.
+        monkeypatch.setattr(
+            "langstage_jupyter.launcher.secrets.token_urlsafe", lambda n: token
+        )
+        monkeypatch.setattr("langstage_jupyter.launcher.subprocess.run", fake_run)
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter"] + argv)
+        monkeypatch.delenv("JUPYTER_TOKEN", raising=False)
+        with pytest.raises(SystemExit):  # main() propagates the child's exit code
+            main()
+        return calls
+
+    def test_generated_token_is_emitted_in_the_equals_form(self, monkeypatch):
+        calls = self._run_main_with_token(["--no-browser"], monkeypatch)
+        # One arg carrying flag AND value, so the leading `-` can never be re-read
+        # as a separate option.
+        assert f"--IdentityProvider.token={LEADING_DASH_TOKEN}" in calls["cmd"]
+        # ...and never the fragile space form that strands the value as its own argv
+        # entry.
+        assert "--IdentityProvider.token" not in calls["cmd"]
+        assert LEADING_DASH_TOKEN not in calls["cmd"]
+
+    def test_jupyter_lab_argparse_accepts_the_emitted_argv(self, monkeypatch):
+        """The load-bearing assertion: the real parser boots on what we emit."""
+        calls = self._run_main_with_token(["--no-browser"], monkeypatch)
+        # Drop the `python -m jupyterlab` prefix; the loader sees only the flags.
+        jupyter_flags = calls["cmd"][3:]
+        assert _traitlets_accepts(jupyter_flags)
+        # Sanity-check the harness itself: the OLD space form really does abort, so a
+        # green result above can't be the assertion silently passing on anything.
+        assert not _traitlets_accepts(
+            ["--IdentityProvider.token", LEADING_DASH_TOKEN, "--no-browser"]
+        )
+
+    def test_generated_token_reaches_the_agent_env_intact(self, monkeypatch):
+        # The equals form must not mangle the value the notebook tools authenticate
+        # with — otherwise they'd 403 against the server they just launched.
+        calls = self._run_main_with_token(["--no-browser"], monkeypatch)
+        assert calls["env"]["LANGSTAGE_JUPYTER_TOKEN"] == LEADING_DASH_TOKEN
+        assert calls["env"]["DEEPAGENT_JUPYTER_TOKEN"] == LEADING_DASH_TOKEN
+
+    def test_leading_dash_jupyter_token_env_is_also_safe(self, monkeypatch):
+        # Same emission path covers a leading-dash JUPYTER_TOKEN from the environment.
+        calls = {}
+
+        def fake_run(cmd, env=None):
+            calls["cmd"] = cmd
+            return MagicMock(returncode=0)
+
+        monkeypatch.setattr("langstage_jupyter.launcher.subprocess.run", fake_run)
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", "--no-browser"])
+        monkeypatch.setenv("JUPYTER_TOKEN", LEADING_DASH_TOKEN)
+        with pytest.raises(SystemExit):
+            main()
+        assert f"--IdentityProvider.token={LEADING_DASH_TOKEN}" in calls["cmd"]
+        assert _traitlets_accepts(calls["cmd"][3:])
+
+    def test_user_pinned_token_still_not_duplicated(self, monkeypatch):
+        # Guard against regressing gh #69 while fixing #79: with a user-pinned token
+        # we still inject nothing, in either form.
+        calls = self._run_main_with_token(
+            ["--no-browser", "--IdentityProvider.token=MyPinnedToken"], monkeypatch
+        )
+        assert "--IdentityProvider.token=MyPinnedToken" in calls["cmd"]
+        assert f"--IdentityProvider.token={LEADING_DASH_TOKEN}" not in calls["cmd"]
+        assert "--IdentityProvider.token" not in calls["cmd"]
+        assert (
+            sum(a.startswith("--IdentityProvider.token") for a in calls["cmd"]) == 1
+        )
 
 
 class TestVerifyFlag:
