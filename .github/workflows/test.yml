@@ -45,7 +45,14 @@ jobs:
         pip install "jupyterlab>=4.0,<5"
         # AG-UI is the wrapper's only streaming path (core 1.0), so [agui] pulls
         # ag-ui-langgraph[fastapi] + uvicorn — tests/test_agui_stream.py runs, not skips.
-        pip install "langstage-core[agui]>=1.0"
+        # NOTE: this job installs a hand-listed dependency set rather than the
+        # package's own (a plain `pip install -e .` would fire the jupyter-builder
+        # hook and require Node here), so this floor must be kept in step with the
+        # `langstage-core` floor in pyproject.toml — otherwise CI silently tests
+        # against a core that predates a fix the package declares it needs, which
+        # is exactly what happened on gh #78 (>=1.0.21 carries the TOML type
+        # coercion). The `minimal-install` job is what exercises the declared deps.
+        pip install "langstage-core[agui]>=1.0.21"
         pip install nbformat requests tornado traitlets jupyter_client
 
     - name: Add package to Python path
