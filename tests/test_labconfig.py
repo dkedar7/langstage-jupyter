@@ -148,3 +148,51 @@ def test_unset_numeric_env_uses_default_without_note(
         cfg = LabConfig.resolve(env=env, toml_start=tmp_path)
         assert getattr(cfg, field) == default
     assert "malformed" not in capsys.readouterr().err
+
+
+# ── gh #78: a wrong-TYPE value in langstage.toml ─────────────────────────────
+# The untreated sibling of #75 (which hardened the *env* casters only). A quoted
+# number in TOML is syntactically valid but the wrong type, and it used to be
+# handed through verbatim: `execute_timeout = "300"` became the str '300' for a
+# field declared float, --show-config stripped the quotes so it looked correct,
+# and the defect surfaced far away as
+# `TypeError: unsupported operand type(s) for +: 'float' and 'str'` the first
+# time notebook_tools.py ran a cell. The repair lives in langstage-core's
+# HostConfig._coerce (>= 1.0.21), which LabConfig resolves through; these pin
+# that it actually reaches this stage.
+
+@pytest.mark.parametrize("body, field, expected", [
+    ('[jupyter]\nexecute_timeout = "300"\n', "execute_timeout", 300.0),
+    ('[model]\ntemperature = "0.5"\n', "model_temperature", 0.5),
+])
+def test_quoted_number_in_toml_is_coerced(isolated, tmp_path, body, field, expected):
+    _toml(tmp_path, body)
+    cfg = LabConfig.resolve(env={}, toml_start=tmp_path)
+    value = getattr(cfg, field)
+    assert value == expected
+    assert isinstance(value, float), f"{field} resolved as {type(value).__name__}"
+
+
+def test_coerced_timeout_survives_the_cell_execution_arithmetic(isolated, tmp_path):
+    """The exact expression from the issue: notebook_tools.py's deadline math."""
+    import time
+
+    _toml(tmp_path, '[jupyter]\nexecute_timeout = "300"\n')
+    cfg = LabConfig.resolve(env={}, toml_start=tmp_path)
+    assert time.monotonic() + cfg.execute_timeout > 0  # used to raise TypeError
+
+
+@pytest.mark.parametrize("body, field, default", [
+    ('[jupyter]\nexecute_timeout = "not-a-number"\n', "execute_timeout", 300.0),
+    ("[model]\ntemperature = true\n", "model_temperature", 0.0),
+])
+def test_uncoercible_toml_value_degrades_with_a_note(
+    isolated, tmp_path, capsys, body, field, default
+):
+    """Uncoercible keeps the default AND the 'default' source attribution, so
+    --show-config can never present an unusable value as a live TOML setting."""
+    _toml(tmp_path, body)
+    cfg = LabConfig.resolve(env={}, toml_start=tmp_path)
+    assert getattr(cfg, field) == default
+    assert cfg.sources[field] == "default"
+    assert "malformed" in capsys.readouterr().err
