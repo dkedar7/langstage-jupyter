@@ -671,8 +671,17 @@ def main():
     # Inject our token only when the user didn't pin one themselves — otherwise
     # jupyter_server sees the token twice and aborts (gh #69, the token twin of #40).
     # The user's own --IdentityProvider.token/--ServerApp.token rides through in `args`.
+    #
+    # Emit the EQUALS form, never `['--IdentityProvider.token', token]`. `token_urlsafe`
+    # draws from the base64url alphabet, so ~1.6% of generated tokens start with `-`;
+    # in the space form jupyter lab's argparse reads that value as another option flag
+    # and aborts before booting — `argument --IdentityProvider.token: expected one
+    # argument`, no server, no sidebar, and it "works on re-run" (gh #79). `--opt=value`
+    # is never re-split, so a leading `-` is safe. This also covers a leading-dash
+    # JUPYTER_TOKEN from the environment, and matches --serve-check's
+    # f"--ServerApp.token={token}" above.
     if user_token is None:
-        jupyter_args.extend(['--IdentityProvider.token', token])
+        jupyter_args.append(f'--IdentityProvider.token={token}')
 
     # Add any user-provided arguments
     jupyter_args.extend(args)

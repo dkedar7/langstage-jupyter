@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.6.19 - 2026-07-18
+
+### Fixed
+- **An auto-generated token that happens to start with `-` no longer stops JupyterLab from
+  starting at all (gh #79).** The headline zero-config launcher generates its auth token with
+  `secrets.token_urlsafe(32)` and injected it space-separated —
+  `['--IdentityProvider.token', token]`. `token_urlsafe` draws from the **base64url** alphabet,
+  which includes `-`, so roughly **1.57% of launches** (about 1 in 64) produced a token beginning
+  with `-`; `jupyter lab`'s argparse then read that value as another option flag and aborted before
+  the server ever booted: `argument --IdentityProvider.token: expected one argument`, exit 2. No
+  `/lab`, no chat sidebar, no health endpoint — the documented "recommended, zero-configuration"
+  entrypoint failed outright. The failure was maximally confusing to diagnose: it depended only on
+  the random draw, so it looked flaky rather than broken, the error never named the token *value*,
+  and re-running the identical command usually worked. The launcher now emits the **equals form**,
+  `--IdentityProvider.token=<token>` — a single argv entry that can never be re-split, so a leading
+  `-` is inert. This is the shape the launcher already *recognized* on input from users
+  (`_find_user_token` handles both forms) and already *emitted* itself for `--serve-check`
+  (`--ServerApp.token={token}`); only the auto path still used the fragile spelling. A
+  leading-dash `JUPYTER_TOKEN` taken from the environment rides the same emission path and is now
+  safe too. This is the third trigger in the launcher's arg-injection family, after #40 (duplicate
+  `--port`) and #69 (duplicate user-pinned token), and it does not disturb either: the
+  duplicate-token scan reads the *user's* args, never the argv the launcher builds, so a pinned
+  token is still respected and still not doubled. New regression tests pin a leading-dash token
+  deterministically and assert the emitted argv is accepted by traitlets'
+  `KVArgParseConfigLoader` — the very parser that produced the crash.
+
 ## 0.6.18 - 2026-07-16
 
 ### Fixed
