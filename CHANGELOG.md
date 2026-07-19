@@ -3,6 +3,20 @@
 ## 0.6.19 - 2026-07-18
 
 ### Fixed
+- **A wrong-TYPE value in `langstage.toml` no longer sails through as a `str` and detonates
+  mid-notebook-run (gh #78).** Quoting a number — `execute_timeout = "300"`, one of the most
+  common TOML mistakes — was accepted verbatim for a field declared `float`, and `--show-config`
+  strips the quotes, so the bad value was *visually indistinguishable* from a correct one. The
+  failure then surfaced far from its cause: `notebook_tools.py`'s
+  `deadline = time.monotonic() + EXECUTE_TIMEOUT` died with a raw
+  `TypeError: unsupported operand type(s) for +: 'float' and 'str'` that never mentioned
+  `langstage.toml` or the offending key. This is the untreated sibling of the #75 env fix, whose
+  own suggested fix named the right layer: the repair belongs in `langstage-core`'s
+  `HostConfig._coerce`, which every stage resolves through, not in this one host. Requires
+  **langstage-core >= 1.0.21**, which is what actually delivers it — a coercible value is now
+  cast (`"300"` -> `300.0`), and an uncoercible one (`"warm"`, `true`) keeps the default, keeps
+  the `[default]` source attribution so `--show-config` can't advertise it as live, and prints a
+  one-line `note:` naming the file and key.
 - **An auto-generated token that happens to start with `-` no longer stops JupyterLab from
   starting at all (gh #79).** The headline zero-config launcher generates its auth token with
   `secrets.token_urlsafe(32)` and injected it space-separated —

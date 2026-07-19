@@ -36,7 +36,12 @@ dependencies = [
     # is a HARD runtime requirement. A bare `pip install langstage-jupyter` must
     # be able to run a turn.
     # >=1.0.6 for the shared preflight primitive core.verify() used by --verify.
-    "langstage-core[agui]>=1.0.7",
+    # >=1.0.21 so a wrong-TYPE value in langstage.toml (a quoted number, a bool for
+    # a numeric field) is coerced or rejected with a note instead of being handed
+    # through as a str and crashing a cell execution with a raw TypeError. The fix
+    # lives in core's HostConfig._coerce, which this package resolves through, so
+    # the floor is what actually delivers it to an existing install (gh #78).
+    "langstage-core[agui]>=1.0.21",
     "python-dotenv>=0.19.0",
     "deepagents>=0.1.0",
     # Direct top-level imports in langstage_jupyter/agent.py. Previously only
