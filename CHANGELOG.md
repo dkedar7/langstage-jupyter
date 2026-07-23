@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.6.22 - 2026-07-23
+
+### Fixed
+- **`--show-config` no longer reports a present-but-malformed `langstage.toml` as absent
+  (gh #86).** When a `langstage.toml` exists but has a syntax error, the *same* command
+  printed two contradictory statements: the stderr note (from langstage-core) correctly
+  said `note: ignoring malformed config /…/langstage.toml (TOMLDecodeError: …)` — the file
+  *was* found — while the stdout footer said `TOML: no langstage.toml (or legacy
+  deepagents.toml) found`, claiming it doesn't exist. A present-but-unparseable file
+  rendered *identically* to no file at all, so a user debugging "why isn't my
+  `langstage.toml` applied?" was pointed at file location / naming instead of the real
+  cause (a syntax typo already flagged on stderr). The root cause is that
+  `HostConfig.describe()`'s footer keys purely off the *successfully-parsed* paths
+  (`_toml_paths`), which a malformed file leaves empty — collapsing it into the same
+  branch as genuine absence. `LabConfig` now overrides `resolve()` / `describe()` to also
+  consult langstage-core's malformed-file set (`_malformed_toml`, the #61/#42 tracking),
+  intersected with the files actually on *this* resolve's search path (the nearest
+  project `langstage.toml` / legacy `deepagents.toml` and the global config) so a stale
+  entry from an unrelated resolve can't leak in. When a file was found but rejected, the
+  footer now reads `TOML: found <path> but it is malformed (see the note above); using
+  environment + defaults` — agreeing with the stderr note instead of contradicting it. A
+  valid file still shows `TOML read from: <path>` and genuine absence still shows
+  `no langstage.toml … found`; both are untouched.
+
 ## 0.6.21 - 2026-07-23
 
 ### Fixed
