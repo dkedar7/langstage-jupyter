@@ -116,6 +116,19 @@ npm = ["jlpm"]
 source_dir = "src"
 build_dir = "lib"
 
+# gh #82 (third recurrence of #38/#48): the jupyter-builder `skip-if-exists`
+# above reuses a leftover `langstage_jupyter/labextension/` from a *previous*
+# release build, so `uv build` can package a stale JS bundle whose version
+# lags `package.json` (labextension reports the old version; pip/--version the
+# new one). The dir is git-ignored and CI checks out clean, so the drift is
+# invisible to `git status` and never reproduces in CI -- it shipped three
+# times. This custom hook (`hatch_build.py`) runs on every build and hard-fails
+# it when a bundled labextension is present but its version != `package.json`,
+# turning `scripts/check_labext_version.py`'s manual, forgettable pre-publish
+# check into a guarantee enforced inside the build itself.
+[tool.hatch.build.hooks.custom]
+path = "hatch_build.py"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]

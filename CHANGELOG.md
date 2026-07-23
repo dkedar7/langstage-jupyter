@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.6.20 - 2026-07-23
+
+### Fixed
+- **A release build can no longer ship a stale prebuilt labextension whose version
+  lags the package (gh #82).** A clean `pip install langstage-jupyter==0.6.19`
+  reported `0.6.19` for the Python package, the `--version` launcher, and the
+  server extension, but `jupyter labextension list` showed **`v0.6.11`** — the
+  bundled frontend asset (`share/jupyter/labextensions/langstage-jupyter/package.json`)
+  was a stale `0.6.11` build. To a user, the standard way to confirm a labextension
+  install then reads like a broken or half-applied upgrade, and JupyterLab's
+  extension manager keys "update available" off that frozen version. The root cause
+  is the `hatch-jupyter-builder` hook's `skip-if-exists`
+  (`langstage_jupyter/labextension/static/style.js`): a `uv build` run against a
+  working tree that still holds a *previous* release's `langstage_jupyter/labextension/`
+  **reuses that stale JS bundle instead of rebuilding it** — the build log literally
+  says `Skip-if-exists file(s) found` / `Skipping build`. The directory is
+  git-ignored, so the drift never appears in `git status`, and a clean CI checkout
+  has no stale artifact to reuse, so it never reproduces in CI. The mismatch is
+  therefore invisible everywhere except the maintainer's local release build — which
+  is exactly why this is the **third occurrence of the same drift** (previously
+  #38 and #48, both closed 2026-07-03). Each prior fix rebuilt the bundle for *that*
+  release and added `scripts/check_labext_version.py`, a pre-publish gate that asserts
+  the built wheel's bundled labextension version == the wheel version — but it had to
+  be run *by hand* before `uv publish` and simply wasn't before 0.6.19 shipped, so
+  eight Python-only releases (0.6.12 → 0.6.19) all carried the stale 0.6.11 frontend.
+  What makes it not recur this time: the same assertion now runs **inside the build
+  itself**. A new custom hatchling build hook (`hatch_build.py`, registered as
+  `[tool.hatch.build.hooks.custom]`) fires on every `uv build` / `pip wheel .` /
+  editable install and **hard-fails the build** when a bundled
+  `langstage_jupyter/labextension/` is present with a version that differs from
+  `package.json` — the stale bundle can no longer be *packaged*, so there is no
+  forgettable manual step and no wheel to accidentally publish. The check is narrow
+  and order-independent: when the labextension dir is absent (a clean tree) the
+  jupyter-builder hook rebuilds it fresh — matching `package.json` by construction —
+  and the guard stays silent. The `labext-version` CI job now also runs `uv build`
+  and asserts parity so the guard's own failure path is exercised, and a regression
+  test pins that a deliberately-stale bundle raises.
+
 ## 0.6.19 - 2026-07-18
 
 ### Fixed
