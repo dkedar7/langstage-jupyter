@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.6.21 - 2026-07-23
+
+### Fixed
+- **A malformed numeric env var no longer silently discards a valid `langstage.toml` value
+  (gh #83).** The #75 fix stopped a bad `LANGSTAGE_MODEL_TEMPERATURE` / `LANGSTAGE_EXECUTE_TIMEOUT`
+  from crashing every entrypoint, but it did so with a local `_lenient_number` wrapper that
+  returned the field **default** directly on a bad value — short-circuiting config precedence. So a
+  malformed env var of a key that a valid `langstage.toml` also set didn't just get ignored: it
+  *clobbered* the user's explicit config with the built-in default, and `--show-config` mislabeled
+  the source as `[env:...]` — actively confirming the wrong source to anyone debugging "why is my
+  temperature 0.0?". The numeric casters are now plain `float`, delegating to
+  `HostConfig.resolve()`, which since **langstage-core 1.0.23** (#104) catches the caster error,
+  emits the note, and keeps the value from the layer *beneath* env — the `langstage.toml` value if
+  one is set, else the default — with the source correctly attributed. This removes the local
+  leniency shim entirely (one place, in core, handles it for every stage). Requires
+  **langstage-core >= 1.0.23**.
+
 ## 0.6.20 - 2026-07-23
 
 ### Fixed

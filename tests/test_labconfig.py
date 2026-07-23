@@ -196,3 +196,23 @@ def test_uncoercible_toml_value_degrades_with_a_note(
     assert getattr(cfg, field) == default
     assert cfg.sources[field] == "default"
     assert "malformed" in capsys.readouterr().err
+
+
+# ── gh #83: a malformed env var must not clobber a valid langstage.toml value ────
+@pytest.mark.parametrize("var, field, toml_body, toml_val", [
+    ("LANGSTAGE_MODEL_TEMPERATURE", "model_temperature", "[model]\ntemperature = 0.7\n", 0.7),
+    ("LANGSTAGE_EXECUTE_TIMEOUT", "execute_timeout", "[jupyter]\nexecute_timeout = 120\n", 120.0),
+])
+def test_malformed_env_keeps_the_toml_value(isolated, tmp_path, capsys, var, field, toml_body, toml_val):
+    """The precedence half of #83: env sits above TOML, so a REJECTED env var must
+    fall through to the TOML value that a valid config set — not skip straight to the
+    built-in default (which the old _lenient_number wrapper did), and --show-config
+    must credit toml, not the rejected env var."""
+    _toml(tmp_path, toml_body)
+    cfg = LabConfig.resolve(env={var: "notanumber"}, toml_start=tmp_path)
+
+    assert getattr(cfg, field) == toml_val, "malformed env clobbered the langstage.toml value"
+    assert cfg.sources[field].startswith("toml"), "source mislabeled as env for a rejected value"
+    # the note names what it kept — the TOML value, not "default"
+    err = capsys.readouterr().err
+    assert "ignoring malformed" in err and str(toml_val) in err

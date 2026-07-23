@@ -41,7 +41,7 @@ dependencies = [
     # through as a str and crashing a cell execution with a raw TypeError. The fix
     # lives in core's HostConfig._coerce, which this package resolves through, so
     # the floor is what actually delivers it to an existing install (gh #78).
-    "langstage-core[agui]>=1.0.21",
+    "langstage-core[agui]>=1.0.23",
     "python-dotenv>=0.19.0",
     "deepagents>=0.1.0",
     # Direct top-level imports in langstage_jupyter/agent.py. Previously only
