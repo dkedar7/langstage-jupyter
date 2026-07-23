@@ -39,15 +39,16 @@ def _restore_workspace_root():
 def _reset_malformed_env_dedupe():
     """Clear the once-per-value malformed-numeric-env notice dedupe between tests.
 
-    ``config._warned_malformed_env`` (gh #75) suppresses a repeat note for the same
-    bad value across the multiple ``resolve()`` calls in one process. It is
+    The dedupe now lives in langstage-core (``_warned_malformed_env_value``, #104):
+    since gh #83 this package delegates malformed-numeric-env handling to
+    ``HostConfig.resolve()`` rather than its own ``_lenient_number`` wrapper. It is
     process-global, so without a reset a test that already tripped ``(var, "abc")``
     would silence the note a later test asserts on — test order shouldn't decide
     whether the note fires."""
-    import langstage_jupyter.config as _cfg
-    _cfg._warned_malformed_env.clear()
+    import langstage_core.host.config as _core_cfg
+    getattr(_core_cfg, "_warned_malformed_env_value", set()).clear()
     yield
-    _cfg._warned_malformed_env.clear()
+    getattr(_core_cfg, "_warned_malformed_env_value", set()).clear()
 
 
 @pytest.fixture
