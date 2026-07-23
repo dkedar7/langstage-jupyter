@@ -216,3 +216,47 @@ def test_malformed_env_keeps_the_toml_value(isolated, tmp_path, capsys, var, fie
     # the note names what it kept — the TOML value, not "default"
     err = capsys.readouterr().err
     assert "ignoring malformed" in err and str(toml_val) in err
+
+
+# ── gh #86: --show-config footer must not report a malformed langstage.toml as absent ──
+# The stderr note (from langstage-core) already says "ignoring malformed config <path>",
+# i.e. the file WAS found. But describe()'s footer keyed purely off the successfully-parsed
+# paths, so a present-but-unparseable file fell into the same "no langstage.toml ... found"
+# branch as a genuinely absent one — two contradictory statements in one command, steering
+# a user debugging "why isn't my langstage.toml applied?" at file location instead of the
+# real syntax typo. The three config states must render three distinct footers.
+
+# The issue's exact repro: a [jupyter table header missing its closing ']'.
+_MALFORMED_TOML = '[model]\nname = "my-model"\ntemperature = 0.5\n[jupyter\nvirtual_mode = false\n'
+
+
+def test_show_config_footer_flags_malformed_toml_as_found(isolated, tmp_path, capsys):
+    """Present-but-malformed: the footer must NOT say 'no ... found', and must name the
+    file as found-but-malformed — agreeing with the stderr 'ignoring malformed' note."""
+    (tmp_path / "langstage.toml").write_text(_MALFORMED_TOML)
+    text = LabConfig.resolve(env={}, toml_start=tmp_path).describe()
+
+    assert "no langstage.toml" not in text, "malformed file still reported as absent (gh #86)"
+    assert "malformed" in text, "footer should say the found file is malformed"
+    assert str(tmp_path / "langstage.toml") in text, "footer should name the found file"
+    # ...and it agrees with the stderr note langstage-core emits for the same file.
+    assert "ignoring malformed config" in capsys.readouterr().err
+
+
+def test_show_config_footer_valid_toml_still_reads(isolated, tmp_path):
+    """A VALID file still shows the normal 'TOML read from: <path>' footer (no regression)."""
+    (tmp_path / "langstage.toml").write_text('[model]\nname = "my-model"\n')
+    text = LabConfig.resolve(env={}, toml_start=tmp_path).describe()
+
+    assert "TOML read from:" in text
+    assert str(tmp_path / "langstage.toml") in text
+    assert "malformed" not in text
+    assert "no langstage.toml" not in text
+
+
+def test_show_config_footer_absent_toml_still_reports_not_found(isolated, tmp_path):
+    """Genuine absence still shows the 'no langstage.toml ... found' footer (no regression)."""
+    text = LabConfig.resolve(env={}, toml_start=tmp_path).describe()
+
+    assert "TOML: no langstage.toml (or legacy deepagents.toml) found" in text
+    assert "malformed" not in text
