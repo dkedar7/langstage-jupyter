@@ -568,19 +568,39 @@ def main():
     # chat). Uses --demo for a keyless check. (ADR 0004)
     if "--verify" in args:
         from langstage_core.agui import verify as _core_verify
+        from langstage_jupyter.agent_wrapper import AgentWrapper
         from langstage_jupyter.config import LabConfig
 
         cfg = LabConfig.resolve()
         spec = str(cfg.agent_spec or "").strip()
 
-        # For the BUNDLED default agent (no explicit spec), do the same cheap credential
-        # preflight /health does (gh #60) BEFORE building the agent. The model is built
-        # lazily, so a missing provider key doesn't fail until the first API call — so
-        # core.verify() surfaces it as a raw provider TypeError that never names the
-        # variable. Name it here instead, so --verify and /health say the same thing about
-        # the same failure. A custom/BYO agent's credentials stay the operator's concern
-        # (matching /health scoping) and keep the full one-real-turn check below. (gh #66)
-        if not spec:
+        # Resolve the agent the SAME way the sidebar runtime (AgentWrapper) does —
+        # agent_spec, else agent_module (+ agent_variable), else the bundled default — by
+        # delegating to AgentWrapper's own resolver. Previously --verify keyed off
+        # agent_spec ALONE and silently preflighted the bundled default whenever the agent
+        # was selected via the documented LANGSTAGE_AGENT_MODULE + LANGSTAGE_AGENT_VARIABLE
+        # vars, so --verify checked a DIFFERENT agent than the sidebar actually runs (gh
+        # #90). Drive the shared resolver off the live cfg (env / langstage.toml,
+        # canonical-wins), which in a real launch matches the frozen config.* constants
+        # AgentWrapper reads.
+        module, variable = AgentWrapper.resolve_agent_target(
+            cfg.agent_spec, cfg.agent_module, cfg.agent_variable
+        )
+
+        # The cheap credential preflight is scoped to the BUNDLED DEFAULT agent — the one
+        # whose model spec (and thus required key) we know (gh #60/#66, matching /health).
+        # The default is in play only when the user configured NO agent at all: no spec AND
+        # module/variable both unset. A custom/BYO agent selected via spec OR
+        # module+variable is the operator's concern and gets the full one-real-turn check
+        # below. Keying this off `not spec` alone is exactly what made --verify demand
+        # ANTHROPIC_API_KEY for a keyless module+variable agent that never needed it — for
+        # "the default agent" the user never configured (gh #90).
+        is_bundled_default = (
+            not spec
+            and cfg.sources.get("agent_module") == "default"
+            and cfg.sources.get("agent_variable") == "default"
+        )
+        if is_bundled_default:
             from langstage_jupyter import handlers
 
             missing = handlers._missing_provider_key(str(cfg.model_name or "").strip())
@@ -591,15 +611,11 @@ def main():
                 )
                 sys.exit(1)
 
+        # Build the SAME agent object the sidebar runs, through AgentWrapper's own loader
+        # (same strict module:variable spec, same implicit agent→graph fallback), so the
+        # preflight and the runtime can't build different graphs (gh #90).
         try:
-            if spec:
-                from langstage_core import load_agent_spec
-
-                graph = load_agent_spec(spec)
-            else:
-                # No explicit spec -> the bundled default agent (same object the
-                # extension builds at import).
-                from langstage_jupyter.agent import agent as graph
+            graph, _loaded_spec = AgentWrapper.load_agent_from_target(module, variable)
         except Exception as e:  # noqa: BLE001 - report a load failure cleanly
             print(f"[fail] could not load agent: {e}")
             sys.exit(1)

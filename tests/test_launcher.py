@@ -704,6 +704,54 @@ class TestVerifyFlag:
         assert ran.get("graph") is fake_agent_mod.agent  # got PAST the key check to the turn
         assert "agent verified" in capsys.readouterr().out
 
+    def test_verify_honors_module_and_variable_not_the_default(self, monkeypatch, capsys):
+        # gh #90: when the agent is selected via the DOCUMENTED separate
+        # LANGSTAGE_AGENT_MODULE + LANGSTAGE_AGENT_VARIABLE vars (no agent_spec), --verify
+        # must preflight THAT agent — the one the sidebar runtime (AgentWrapper) loads —
+        # not the bundled default. Before the fix --verify keyed off agent_spec alone, so
+        # for this config it ran the bundled default's credential preflight and failed
+        # demanding ANTHROPIC_API_KEY for a keyless custom agent the user never configured.
+        import sys
+        import types
+
+        # A keyless custom agent selected purely via module+variable (the issue's repro).
+        monkeypatch.setenv("LANGSTAGE_AGENT_MODULE", "mycustom_mod")
+        monkeypatch.setenv("LANGSTAGE_AGENT_VARIABLE", "myagent")
+        monkeypatch.delenv("LANGSTAGE_AGENT_SPEC", raising=False)
+        monkeypatch.delenv("DEEPAGENT_AGENT_SPEC", raising=False)
+        monkeypatch.delenv("DEEPAGENT_AGENT_MODULE", raising=False)
+        monkeypatch.delenv("DEEPAGENT_AGENT_VARIABLE", raising=False)
+        # No provider key: the bundled default's credential preflight WOULD fire here — so
+        # if --verify wrongly resolves the default, it fails before ever building a graph.
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+        sentinel = object()
+        fake_mod = types.ModuleType("mycustom_mod")
+        fake_mod.myagent = sentinel  # the compiled graph AgentWrapper would load
+        monkeypatch.setitem(sys.modules, "mycustom_mod", fake_mod)
+
+        ran = {}
+
+        class _Result:
+            ok = True
+            reason = "one turn completed cleanly"
+
+        def fake_verify(graph, *a, **k):
+            ran["graph"] = graph
+            return _Result()
+
+        monkeypatch.setattr("langstage_core.agui.verify", fake_verify)
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", "--verify"])
+        with pytest.raises(SystemExit) as exc:
+            main()
+        out = capsys.readouterr().out
+        # Verified the RIGHT agent: the module+variable one, keyless, exit 0 — NOT the
+        # default (which would have demanded a key and never reached the turn).
+        assert exc.value.code == 0
+        assert ran.get("graph") is sentinel                       # preflighted the CONFIGURED agent
+        assert "ANTHROPIC_API_KEY" not in out                     # not the bundled default's key check
+        assert "agent verified" in out
+
     def test_verify_broken_agent_fails_exit_one(self, monkeypatch, capsys, tmp_path):
         agent = tmp_path / "broken.py"
         agent.write_text(
