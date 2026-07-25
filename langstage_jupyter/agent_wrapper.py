@@ -42,25 +42,19 @@ class AgentWrapper:
         """
         self.agent = None
 
-        # Check for environment variable spec
-        agent_spec = config.AGENT_SPEC
-
-        if agent_spec:
-            # Parse "module_or_file:variable" format
-            parts = agent_spec.split(':', 1)
-            if len(parts) == 2:
-                self.agent_module_path = parts[0]
-                self.agent_variable_name = parts[1]
-                print(f"Using agent from environment: {self.agent_module_path}:{self.agent_variable_name}")
-            else:
-                print(f"Warning: DEEPAGENT_AGENT_SPEC format should be 'module:variable', got: {agent_spec}")
-                print(f"Falling back to parameters or defaults")
-                self.agent_module_path = agent_module_path or config.AGENT_MODULE
-                self.agent_variable_name = agent_variable_name or config.AGENT_VARIABLE
-        else:
-            # Use function parameters or config defaults
-            self.agent_module_path = agent_module_path or config.AGENT_MODULE
-            self.agent_variable_name = agent_variable_name or config.AGENT_VARIABLE
+        # Resolve WHICH agent to load — an explicit spec beats module+variable beats the
+        # config defaults. Factored into resolve_agent_target() so the launcher's --verify
+        # preflight resolves the agent through the EXACT same precedence the sidebar runtime
+        # does, instead of keying off agent_spec alone and silently preflighting the bundled
+        # default whenever the agent was selected via LANGSTAGE_AGENT_MODULE +
+        # LANGSTAGE_AGENT_VARIABLE (gh #90).
+        self.agent_module_path, self.agent_variable_name = self.resolve_agent_target(
+            config.AGENT_SPEC,
+            config.AGENT_MODULE,
+            config.AGENT_VARIABLE,
+            agent_module_path,
+            agent_variable_name,
+        )
 
         # Whether the operator pinned an explicit workspace root — via
         # LANGSTAGE_WORKSPACE_ROOT / legacy DEEPAGENT_WORKSPACE_ROOT, or
@@ -81,31 +75,78 @@ class AgentWrapper:
         # differs. (gh #36)
         self._applied_root = self._resolve_root(self._pinned_root or ".")
 
+    @staticmethod
+    def resolve_agent_target(agent_spec, agent_module, agent_variable,
+                             agent_module_path=None, agent_variable_name=None):
+        """Resolve a configuration to the ``(module_path, variable_name)`` to load.
+
+        The single source of truth for *which* agent a configuration selects, so the
+        sidebar runtime and the launcher's ``--verify`` preflight can't diverge (gh #90):
+
+        1. an explicit ``agent_spec`` (``"module_or_file:variable"``) wins;
+        2. otherwise the module + variable, with explicit call params overriding config.
+
+        ``AgentWrapper.__init__`` calls this with the frozen ``config.*`` constants (the
+        runtime's source); the launcher's ``--verify`` calls it with a live
+        ``LabConfig.resolve()`` — in a real launch the two see the same environment, so
+        they resolve the same agent. Kept a static method (no ``config`` reads inside) so
+        ``--verify`` can drive it off live config without re-importing the frozen constants.
+        """
+        if agent_spec:
+            # Parse "module_or_file:variable" — split on the FIRST ':' so
+            # load_agent_from_target reassembles the exact original spec (its
+            # rpartition then splits a Windows 'C:\...:var' path on the LAST ':').
+            parts = agent_spec.split(':', 1)
+            if len(parts) == 2:
+                print(f"Using agent from environment: {parts[0]}:{parts[1]}")
+                return parts[0], parts[1]
+            print(f"Warning: DEEPAGENT_AGENT_SPEC format should be 'module:variable', got: {agent_spec}")
+            print("Falling back to parameters or defaults")
+        return (agent_module_path or agent_module,
+                agent_variable_name or agent_variable)
+
+    @staticmethod
+    def load_agent_from_target(agent_module_path, agent_variable_name):
+        """Build the compiled agent for a resolved ``(module_path, variable_name)``.
+
+        The load half of the runtime's resolution, factored out so ``--verify`` builds the
+        agent through the EXACT same path the sidebar does (gh #90): the strict
+        ``module:variable`` spec via ``langstage_core.load_agent_spec`` (handles both file
+        paths and dotted module paths), plus the extension's historical implicit ``agent``
+        → ``graph`` fallback when no variable was named.
+
+        Returns ``(agent, loaded_spec)`` — ``loaded_spec`` is the ``"module:variable"`` that
+        actually resolved (so callers can report which name loaded). Propagates the loader
+        error on failure; ``_load_agent`` swallows it (the long-running server keeps
+        booting), ``--verify`` turns it into a clean verdict.
+        """
+        var = agent_variable_name or "agent"
+        spec = f"{agent_module_path}:{var}"
+        try:
+            return load_agent_spec(spec), spec
+        except (ValueError, FileNotFoundError, ImportError, AttributeError):
+            # No explicit variable requested → try the legacy 'graph' name.
+            if agent_variable_name is None:
+                graph_spec = f"{agent_module_path}:graph"
+                return load_agent_spec(graph_spec), graph_spec
+            raise
+
     def _load_agent(self):
         """Load the agent via the shared host loader.
 
-        Builds a ``module_or_path:variable`` spec from the resolved module
-        path + variable name and delegates to
-        ``langstage_core.host.load_agent_spec`` (which handles both
-        file paths and dotted module paths). When no explicit variable name
-        was requested, falls back from ``agent`` to ``graph`` — preserving the
-        extension's historical default-name behavior.
+        Delegates to ``load_agent_from_target`` (the same resolver ``--verify`` uses) to
+        build the agent from the resolved module path + variable name, then swallows a
+        load failure into ``self.agent = None`` with a warning so the long-running server
+        keeps booting instead of crashing.
         """
         # Invalidate any cached AG-UI wrapper so it rebuilds around the fresh graph.
         self._agui_agent = None
-        var = self.agent_variable_name or "agent"
         try:
-            self.agent = load_agent_spec(f"{self.agent_module_path}:{var}")
-            print(f"Loaded agent: {self.agent_module_path}:{var}")
+            self.agent, loaded_spec = self.load_agent_from_target(
+                self.agent_module_path, self.agent_variable_name
+            )
+            print(f"Loaded agent: {loaded_spec}")
         except (ValueError, FileNotFoundError, ImportError, AttributeError) as e:
-            # No explicit variable requested → try the legacy 'graph' fallback.
-            if self.agent_variable_name is None:
-                try:
-                    self.agent = load_agent_spec(f"{self.agent_module_path}:graph")
-                    print(f"Loaded agent: {self.agent_module_path}:graph")
-                    return
-                except Exception:
-                    pass
             print(f"Warning: Could not load agent '{self.agent_module_path}': {e}")
             if config.AGENT_SPEC:
                 print(f"Note: DEEPAGENT_AGENT_SPEC is set to: {config.AGENT_SPEC}")

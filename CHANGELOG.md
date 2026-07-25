@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.6.24 - 2026-07-25
+
+### Fixed
+- **`--verify` now preflights the agent selected via `LANGSTAGE_AGENT_MODULE` +
+  `LANGSTAGE_AGENT_VARIABLE`, not the bundled default (gh #90).** `--verify` is sold as
+  the preflight that proves *the agent the extension would run* can complete one real turn,
+  and its own comment claims to "resolve the spec the same way" the runtime does. It didn't:
+  it keyed the resolution off `agent_spec` **alone**. When the agent was selected via the
+  separate `LANGSTAGE_AGENT_MODULE` + `LANGSTAGE_AGENT_VARIABLE` vars — a config path
+  documented in `.env.example`, advertised by `--show-config` as the live source, and
+  honored by the actual runtime (`AgentWrapper`) — `--verify` silently ignored them and
+  preflighted the **bundled default agent** instead. So the check meant to prove the
+  configured agent runs was checking a *different* agent, in both directions:
+  - **False RED:** a user whose sidebar runs a working *keyless* custom agent (module+variable,
+    no provider key) got a spurious `[fail] … ANTHROPIC_API_KEY is not set — the default
+    agent's first turn would fail`, naming "the default agent" they never configured.
+  - **False GREEN (the dangerous one):** if the module+variable agent was broken but a
+    provider key happened to be set, `--verify` preflighted the *default* agent, passed, and
+    reported green — waving through the broken agent the sidebar actually loads.
+
+  Root cause: two resolvers had drifted. The runtime (`AgentWrapper.__init__`) resolves
+  `agent_spec` → `agent_module` (+ `agent_variable`) → default; `--verify` resolved
+  `agent_spec` → default, skipping the middle step entirely. The fix factors
+  `AgentWrapper`'s resolution into two shared static helpers — `resolve_agent_target()`
+  (config → `(module, variable)`, spec beats module+variable beats defaults) and
+  `load_agent_from_target()` (the strict `module:variable` load via
+  `langstage_core.load_agent_spec`, with the historical implicit `agent` → `graph`
+  fallback) — and has **both** the sidebar runtime and `--verify` build the agent through
+  them, so the two structurally *can't* diverge again. `--verify` drives the shared resolver
+  off a live `LabConfig.resolve()`, which in a real launch matches the frozen `config.*`
+  constants `AgentWrapper` reads. The bundled-default credential preflight (gh #60/#66,
+  matching `/health` scoping) is now scoped to the case where the user configured **no**
+  agent at all — no `agent_spec` *and* `agent_module`/`agent_variable` both unset — instead
+  of firing for any empty `agent_spec`, so a keyless module+variable agent is no longer
+  wrongly asked for a key. `--verify` still exits `0`/`1` on one real turn; the `agent_spec`
+  and `-a`/`--demo` paths are unchanged.
+
 ## 0.6.23 - 2026-07-25
 
 ### Added
