@@ -260,3 +260,62 @@ def test_show_config_footer_absent_toml_still_reports_not_found(isolated, tmp_pa
 
     assert "TOML: no langstage.toml (or legacy deepagents.toml) found" in text
     assert "malformed" not in text
+
+
+# ── gh #88: config_dict() is the machine-readable twin of describe() ──
+# LabConfig extends langstage-core's config_dict() the same way it extends describe():
+# the base `toml` block is {found, path}, keyed off the SUCCESSFULLY-parsed paths, so a
+# present-but-unparseable file would read as {found: false} — the same "looks absent"
+# lie #86 fixed for the human footer. The override injects `malformed` and, only when no
+# valid file parsed, flips found/path to name the found-but-malformed file.
+
+_OMIT = ["host", "port", "title", "jupyter_token", "jupyter_server_url"]
+
+
+def test_config_dict_flags_malformed_toml(isolated, tmp_path, capsys):
+    """Present-but-malformed: the toml block must report malformed=true and name the
+    found file (found=true, path=<file>) — the JSON twin of the #86 human footer."""
+    (tmp_path / "langstage.toml").write_text(_MALFORMED_TOML)
+    d = LabConfig.resolve(env={}, toml_start=tmp_path).config_dict(omit_keys=_OMIT)
+
+    assert d["toml"]["malformed"] is True
+    assert d["toml"]["found"] is True, "found file must not read as absent (gh #86)"
+    assert d["toml"]["path"] == str(tmp_path / "langstage.toml")
+    # A malformed file applies nothing, so a value it tried to set falls back to default.
+    assert d["config"]["model_name"]["source"] == "default"
+    assert "ignoring malformed config" in capsys.readouterr().err
+
+
+def test_config_dict_valid_toml_not_malformed(isolated, tmp_path):
+    """A VALID file: found=true, path names it, malformed=false, and the source credits it."""
+    (tmp_path / "langstage.toml").write_text('[model]\nname = "my-model"\n')
+    d = LabConfig.resolve(env={}, toml_start=tmp_path).config_dict(omit_keys=_OMIT)
+
+    assert d["toml"]["found"] is True
+    assert d["toml"]["path"] == str(tmp_path / "langstage.toml")
+    assert d["toml"]["malformed"] is False
+    assert d["config"]["model_name"]["source"] == "toml (langstage.toml)"
+
+
+def test_config_dict_absent_toml_not_malformed(isolated, tmp_path):
+    """Genuine absence: found=false, path=None, malformed=false (no regression)."""
+    d = LabConfig.resolve(env={}, toml_start=tmp_path).config_dict(omit_keys=_OMIT)
+
+    assert d["toml"] == {"found": False, "path": None, "malformed": False}
+
+
+def test_config_dict_sources_match_describe(isolated, tmp_path):
+    """The JSON sources must equal the human table's [source] for every shown key —
+    the two views are two renderers over the SAME resolved data, and drift between
+    them is exactly the config-precedence bug class #88 makes assertable."""
+    (tmp_path / "langstage.toml").write_text('[model]\nname = "my-model"\n')
+    cfg = LabConfig.resolve(env={"DEEPAGENT_MODEL_TEMPERATURE": "0.7"}, toml_start=tmp_path)
+    d = cfg.config_dict(omit_keys=_OMIT)
+    text = cfg.describe(omit_keys=_OMIT)
+
+    # model_name from toml, model_temperature from env, the rest default — every
+    # source string the JSON reports must appear verbatim in the human table.
+    assert d["config"]["model_name"]["source"] == "toml (langstage.toml)"
+    assert d["config"]["model_temperature"]["source"] == "env:DEEPAGENT_MODEL_TEMPERATURE"
+    for key, entry in d["config"].items():
+        assert f"[{entry['source']}]" in text, f"{key} source {entry['source']!r} not in table"

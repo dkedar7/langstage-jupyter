@@ -177,6 +177,109 @@ class TestLauncherHelpAndShowConfig:
         assert "agent_spec" in out
 
 
+class TestShowConfigJson:
+    """--show-config --json emits a single machine-readable object (gh #88).
+
+    The human table stays for people; --json gives a CI/tooling consumer a way to
+    assert on the resolved value + provenance per key without regexing [source] out
+    of formatted text.
+    """
+
+    def _isolate(self, monkeypatch, tmp_path):
+        """Clear LANGSTAGE_*/DEEPAGENT_* and point config resolution at tmp_path."""
+        for key in list(os.environ.keys()):
+            if key.startswith(("LANGSTAGE_", "DEEPAGENT_")):
+                monkeypatch.delenv(key, raising=False)
+        # Empty global config dir so the host's ~/.deepagents/config.toml can't leak in,
+        # and cwd = tmp_path so the launcher's LabConfig.resolve() reads THIS langstage.toml.
+        global_dir = tmp_path / "global"
+        global_dir.mkdir(exist_ok=True)
+        monkeypatch.setenv("DEEPAGENTS_CONFIG_HOME", str(global_dir))
+        monkeypatch.chdir(tmp_path)
+
+    def test_json_emits_valid_object_with_version_and_provenance(self, monkeypatch, capsys, tmp_path):
+        import json
+
+        self._isolate(monkeypatch, tmp_path)
+        monkeypatch.setattr(
+            "sys.argv", ["langstage-jupyter", "--show-config", "--json", "--demo"]
+        )
+        main()
+        out = capsys.readouterr().out
+        data = json.loads(out)  # stdout must be exactly one valid JSON object
+
+        # version + labextension_version are both reported (the #82 drift surface).
+        assert data["version"]
+        assert data["labextension_version"]
+        # --demo wires the demo agent via LANGSTAGE_AGENT_SPEC, so its source says so.
+        spec = data["config"]["agent_spec"]
+        assert spec["value"] == DEMO_AGENT_SPEC
+        assert spec["source"] == "env:LANGSTAGE_AGENT_SPEC"
+        assert spec["env"] == "LANGSTAGE_AGENT_SPEC"
+        assert spec["legacy_env"] == "DEEPAGENT_AGENT_SPEC"
+        assert spec["toml"] == "agent.spec"
+        # toml block carries found/path/malformed (no file here → absent, not malformed).
+        assert data["toml"] == {"found": False, "path": None, "malformed": False}
+        # The launcher-managed keys are omitted from JSON too (same list as the table).
+        for key in ("host", "port", "title", "jupyter_token", "jupyter_server_url"):
+            assert key not in data["config"], key
+
+    def test_json_sources_match_human_table(self, monkeypatch, capsys, tmp_path):
+        import json
+
+        self._isolate(monkeypatch, tmp_path)
+        (tmp_path / "langstage.toml").write_text('[model]\nname = "from-toml"\n')
+
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", "--show-config", "--json"])
+        main()
+        data = json.loads(capsys.readouterr().out)
+
+        self._isolate(monkeypatch, tmp_path)
+        (tmp_path / "langstage.toml").write_text('[model]\nname = "from-toml"\n')
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", "--show-config"])
+        main()
+        table = capsys.readouterr().out
+
+        assert data["config"]["model_name"]["source"] == "toml (langstage.toml)"
+        # Every source the JSON reports must appear verbatim in the human table.
+        for key, entry in data["config"].items():
+            assert f"[{entry['source']}]" in table, f"{key}: {entry['source']!r}"
+
+    def test_json_flags_malformed_toml(self, monkeypatch, capsys, tmp_path):
+        import json
+
+        self._isolate(monkeypatch, tmp_path)
+        # A [jupyter table header missing its closing ']' — the #86 repro.
+        (tmp_path / "langstage.toml").write_text(
+            '[model]\nname = "my-model"\n[jupyter\nvirtual_mode = false\n'
+        )
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", "--show-config", "--json"])
+        main()
+        captured = capsys.readouterr()
+        data = json.loads(captured.out)  # stdout stays pure JSON despite the stderr note
+
+        assert data["toml"]["malformed"] is True
+        assert data["toml"]["found"] is True
+        assert data["toml"]["path"] == str(tmp_path / "langstage.toml")
+        # A malformed file applies nothing → the value it tried to set is the default.
+        assert data["config"]["model_name"]["source"] == "default"
+        # The malformed note goes to stderr, keeping stdout a single clean JSON object.
+        assert "ignoring malformed config" in captured.err
+
+    def test_without_json_stays_the_human_table(self, monkeypatch, capsys, tmp_path):
+        """--show-config with no --json is the human table, not JSON (unchanged)."""
+        import json
+
+        self._isolate(monkeypatch, tmp_path)
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", "--show-config", "--demo"])
+        main()
+        out = capsys.readouterr().out
+
+        assert out.startswith("Resolved config")
+        with pytest.raises(json.JSONDecodeError):
+            json.loads(out)
+
+
 class TestFindAvailablePort:
     """Tests for find_available_port function."""
 

@@ -177,6 +177,34 @@ class LabConfig(HostConfig):
                 break
         return "\n".join(lines)
 
+    def config_dict(self, omit_keys: Optional[list] = None) -> dict:
+        """Base ``config_dict`` plus the malformed-``langstage.toml`` flag (gh #88 / #86).
+
+        ``config_dict()`` is langstage-core's machine-readable twin of ``describe()`` —
+        the JSON ``--show-config --json`` renders. Its base ``toml`` block reports only
+        ``{found, path}``, keyed (like the ``describe()`` footer) off the SUCCESSFULLY
+        parsed paths, so a present-but-unparseable file collapses into ``found: false,
+        path: null`` — the exact same "looks absent" lie #86 fixed for the human footer.
+        Core's ``config_dict`` docstring anticipates this: "a host that tracks more …
+        extends the ``toml`` block in its own override."
+
+        This mirrors :meth:`describe`'s footer rewrite as data: it always adds a
+        ``malformed`` boolean, and — only when NO valid file parsed (the same condition
+        under which ``describe`` rewrites the absent footer) — flips ``found``/``path`` to
+        name the found-but-malformed file, so the JSON agrees with the human table and
+        the stderr ``note: ignoring malformed config …``. A mix of a valid global +
+        malformed project keeps crediting the file that DID load (``found``/``path``
+        untouched) while still surfacing ``malformed: true`` as data.
+        """
+        data = super().config_dict(omit_keys=omit_keys)
+        malformed = getattr(self, "_malformed_toml_paths", [])
+        toml_block = data.get("toml", {})
+        toml_block["malformed"] = bool(malformed)
+        if malformed and not toml_block.get("found"):
+            toml_block["found"] = True
+            toml_block["path"] = str(malformed[-1])
+        return data
+
 
 # Module-level constants derived from LabConfig, for call sites that read
 # ``config.X`` (agent.py, agent_wrapper.py). TOML is ON so these honor

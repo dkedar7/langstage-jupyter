@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.6.23 - 2026-07-25
+
+### Added
+- **`--show-config --json`: a machine-readable view of the resolved config (gh #88).**
+  `--show-config` is this package's config-diagnostic verb, but it emitted only an
+  aligned human table, so a CI/tooling consumer that wanted to assert *which layer won*
+  for a key (env vs `langstage.toml` vs default) had to regex the `[source]` bracket out
+  of formatted text — brittle, and it breaks the moment the human layout is tweaked. That
+  was the one gap in the package's preflight story: `--verify`, `--serve-check`, and
+  `--check-connection` already run headless and exit `0`/`1` for a pipeline to gate on;
+  config was the missing scriptable surface. Adding `--json` to `--show-config` emits a
+  single JSON object to stdout and exits `0`:
+
+  ```console
+  $ langstage-jupyter --show-config --json --demo
+  ```
+  ```json
+  {
+    "version": "0.6.23",
+    "labextension_version": "0.6.23",
+    "config": {
+      "agent_spec": {"value": "langstage_core.demo.stub:graph", "source": "env:LANGSTAGE_AGENT_SPEC", "env": "LANGSTAGE_AGENT_SPEC", "legacy_env": "DEEPAGENT_AGENT_SPEC", "toml": "agent.spec"},
+      "model_name": {"value": "anthropic:claude-sonnet-4-6", "source": "default", "env": "LANGSTAGE_MODEL_NAME", "legacy_env": "DEEPAGENT_MODEL_NAME", "toml": "model.name"}
+    },
+    "toml": {"found": false, "path": null, "malformed": false}
+  }
+  ```
+
+  - **`config` and `toml` are the same resolved data the human table renders**, straight
+    from langstage-core 1.0.27's new `HostConfig.config_dict()` (the structured twin of
+    `describe()`), with the *same* omit-list the human `--show-config` uses (`host`,
+    `port`, `title`, `jupyter_token`, `jupyter_server_url`) — so the `source` values match
+    the table verbatim (`default`, `env:LANGSTAGE_…`, `env:DEEPAGENT_…`,
+    `toml (langstage.toml)`) and a consumer can assert
+    `config.model_name.source == "toml (langstage.toml)"` without parsing prose.
+  - **The malformed-`langstage.toml` state is surfaced as data**, not only as the stderr
+    `note:` — the `toml` block carries `malformed: true` and names the found-but-unparseable
+    file (`found: true`, `path: "…"`) for exactly the #86 case, mirroring the human footer.
+    `LabConfig` overrides `config_dict()` to inject this, the same way it already overrides
+    `describe()`.
+  - **`version` / `labextension_version`** report the Python package version and the bundled
+    JS extension's `package.json` version side by side, so a consumer can assert the two
+    agree (the #82 drift is otherwise invisible to `pip`/`--version`).
+  - Exit `0`; everything else (the malformed-TOML `note:`) stays on stderr so stdout is
+    pure JSON — pipe-friendly: `langstage-jupyter --show-config --json | jq .config.model_name.source`.
+  - `--show-config` *without* `--json` is byte-for-byte unchanged.
+
 ## 0.6.22 - 2026-07-23
 
 ### Fixed
