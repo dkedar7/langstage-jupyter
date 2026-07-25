@@ -26,6 +26,40 @@ import subprocess
 # The keyless echo agent shipped with the shared core — see `--demo`.
 DEMO_AGENT_SPEC = "langstage_core.demo.stub:graph"
 
+
+def _package_version() -> str:
+    """This package's version, the same string ``--version`` prints."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version("langstage-jupyter")
+    except PackageNotFoundError:  # pragma: no cover - source checkout w/o metadata
+        return "0.0.0+local"
+
+
+def _labextension_version() -> str:
+    """Version of the bundled JupyterLab extension, from its ``package.json``.
+
+    The labextension is a separate JS bundle stamped with its own version at build
+    time (hatch-nodejs-version, from the same ``package.json`` as the Python
+    package). #82 showed the two can DRIFT — a stale reused bundle ships an old JS
+    version while ``pip``/``--version`` report the new one — which is exactly why a
+    machine-readable ``--show-config`` reports both, so a CI consumer can assert
+    they agree. Read from the bundled manifest shipped inside the package
+    (``langstage_jupyter/labextension/package.json``); fall back to the Python
+    package version when the bundle isn't present (an unbuilt source checkout),
+    which the build-time guard (``hatch_build.py``) pins equal at release anyway.
+    """
+    import json as _json
+    from pathlib import Path
+
+    manifest = Path(__file__).resolve().parent / "labextension" / "package.json"
+    try:
+        return _json.loads(manifest.read_text(encoding="utf-8"))["version"]
+    except (OSError, ValueError, KeyError):  # missing/corrupt bundle manifest
+        return _package_version()
+
+
 _LAUNCHER_HELP = """\
 langstage-jupyter - launch JupyterLab with the LangStage chat sidebar.
 
@@ -36,6 +70,8 @@ Launcher options:
   -a, --agent SPEC   Agent to load (module:attr or path/to/file.py:attr).
   --demo             Use the built-in keyless demo agent (no API key).
   --show-config      Print the resolved configuration and exit.
+                     Add --json to emit it as a single machine-readable JSON
+                     object (value + source per key) on stdout; exit 0.
   --verify           Preflight the agent (run one real turn); exit 0/1. Then exit.
   --serve-check      Headless HTTP smoke test: boot the server extension, serve one
                      turn over /langstage-jupyter/chat, exit 0/1. Then exit.
@@ -467,12 +503,7 @@ def main():
     # --version: report THIS package's version and exit. Passing it through to
     # `jupyter lab` printed JupyterLab's version instead (gh #-dogfood).
     if "--version" in args or "-V" in args:
-        from importlib.metadata import PackageNotFoundError, version
-
-        try:
-            print(f"langstage-jupyter {version('langstage-jupyter')}")
-        except PackageNotFoundError:  # pragma: no cover
-            print("langstage-jupyter 0.0.0+local")
+        print(f"langstage-jupyter {_package_version()}")
         return
 
     # Parse our agent flags FIRST (strip them from args, set env) so --show-config
@@ -503,11 +534,30 @@ def main():
         #   title      — inherited from the web-app HostConfig; read nowhere in this stage
         #   jupyter_token / jupyter_server_url — auto-generated/-detected at startup;
         #     the launcher overrides whatever was resolved (pin via JUPYTER_TOKEN). (gh #34)
-        print(
-            LabConfig.resolve().describe(
-                omit_keys=["host", "port", "title", "jupyter_token", "jupyter_server_url"]
-            )
-        )
+        omit = ["host", "port", "title", "jupyter_token", "jupyter_server_url"]
+        cfg = LabConfig.resolve()
+        # --json: emit the SAME resolved config + provenance as a single machine-readable
+        # object so a CI/tooling consumer can assert on which layer won for a key without
+        # regexing the human table's [source] bracket (gh #88). Exit 0; everything else
+        # (e.g. the malformed-TOML note core prints on resolve) stays on stderr so stdout
+        # is pure JSON, pipe-friendly: `... --show-config --json | jq .config.model_name`.
+        if "--json" in args:
+            import json
+            # Same omit-list as the human table above → identical key set + source labels
+            # (config_dict pins that it agrees with describe()). LabConfig extends the
+            # `toml` block with `malformed` for the found-but-unparseable case (gh #86).
+            data = cfg.config_dict(omit_keys=omit)
+            payload = {
+                "version": _package_version(),
+                "labextension_version": _labextension_version(),
+                "config": data["config"],
+                "toml": data["toml"],
+            }
+            # default=str renders non-JSON-native resolved values (e.g. a Path
+            # workspace_root) as the same string the human table shows.
+            print(json.dumps(payload, indent=2, default=str))
+            return
+        print(cfg.describe(omit_keys=omit))
         return
 
     # --verify: preflight the agent the extension WOULD run — resolve the spec the
