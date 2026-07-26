@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.6.25 - 2026-07-26
+
+### Fixed
+- **`--verify` no longer crashes with a raw traceback when the agent export is not a
+  runnable compiled graph (gh #92).** `--verify` is sold as a clean headless preflight
+  that exits `0`/`1` with an actionable message, and it already handled a bad import and a
+  missing default-agent key (gh #66) cleanly. But a third failure mode — the loaded object
+  is **not a runnable compiled graph** — was unhandled:
+  - **Wrong-type export** (`agent = {"hello": "world"}`, `None`, a function): `_core_verify`
+    → `build_agent` raised `AttributeError: 'dict' object has no attribute 'nodes'`, which
+    escaped uncaught as a full 30-line Python traceback (exit was correctly `1`, but the
+    output was a raw stack trace with **zero** `[fail]` lines).
+  - **Uncompiled `StateGraph`** (forgot `.compile()`): exited cleanly but leaked the
+    internal `[fail] agent verification failed: agent errored: AttributeError: 'StateGraph'
+    object has no attribute 'aget_state'` instead of the actionable "call `.compile()`"
+    guidance the README's status-dot documents.
+
+  The root-cause fix lives in `langstage-core` (**>=1.0.30**, now the floor): `build_agent`
+  raises a clean actionable `TypeError` for a wrong-type / uncompiled export, and
+  `verify()`/`averify()` build the agent **inside** their guarded run, so a bad export is a
+  clean `ok=False` verdict — `--verify` now prints `[fail] agent verification failed:
+  TypeError: build_agent expected a compiled LangGraph graph (CompiledStateGraph) ... but
+  got dict.` and `[fail] agent verification failed: TypeError: ... an uncompiled StateGraph;
+  call .compile() on it first.`. As belt-and-suspenders, the `_core_verify(graph)` call in
+  `launcher.py` is now wrapped in the same `try/except` the loader already uses, so any
+  non-runnable export that raises at this boundary is reported as `[fail] could not verify
+  agent: …` (exit `1`) rather than crashing the launcher. **Requires `langstage-core
+  >=1.0.30`.**
+
 ## 0.6.24 - 2026-07-25
 
 ### Fixed
