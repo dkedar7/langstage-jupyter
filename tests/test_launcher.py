@@ -772,6 +772,61 @@ class TestVerifyFlag:
         assert exc.value.code == 1
         assert "verification failed" in capsys.readouterr().out
 
+    def test_verify_wrong_type_export_is_clean_fail_not_a_traceback(
+        self, monkeypatch, capsys, tmp_path
+    ):
+        # gh #92: a wrong-TYPE export (a dict, None, a function — a valid object that LOADS
+        # fine but is not a runnable compiled graph) must yield a clean `[fail]` verdict +
+        # exit 1, NOT the raw uncaught 30-line traceback the unguarded `_core_verify(graph)`
+        # used to emit (`AttributeError: 'dict' object has no attribute 'nodes'`). Sibling of
+        # the fixed #66. Keyless: the build rejects the type before any provider turn, so this
+        # needs no ANTHROPIC_API_KEY. If the verify call regressed to raising uncaught, `main()`
+        # would propagate the exception and `pytest.raises(SystemExit)` would not match.
+        agent = tmp_path / "wrongtype.py"
+        agent.write_text('agent = {"hello": "world"}\n')
+        monkeypatch.setenv("LANGSTAGE_AGENT_SPEC", "")
+        monkeypatch.setenv("DEEPAGENT_AGENT_SPEC", "")
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", "-a", f"{agent}:agent", "--verify"])
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 1
+        out = capsys.readouterr().out
+        assert "[fail]" in out                              # a clean verdict line...
+        assert "Traceback (most recent call last)" not in out  # ...not an uncaught stack trace
+
+    def test_verify_uncompiled_stategraph_names_dot_compile(
+        self, monkeypatch, capsys, tmp_path
+    ):
+        # gh #92: exporting an uncompiled StateGraph (the common "forgot .compile()" mistake)
+        # must fail with the actionable guidance the README's status dot promises — naming
+        # `.compile()` — not the leaked internal `AttributeError: 'StateGraph' object has no
+        # attribute 'aget_state'` it used to surface verbatim. This asserts core >=1.0.30's
+        # actionable verdict flows through --verify. Keyless (fails at build, pre-turn).
+        agent = tmp_path / "uncompiled.py"
+        agent.write_text(
+            "from langgraph.graph import StateGraph\n"
+            "from typing import TypedDict\n"
+            "class S(TypedDict):\n"
+            "    x: int\n"
+            "b = StateGraph(S)\n"
+            "b.add_node('n', lambda s: s)\n"
+            "b.set_entry_point('n'); b.set_finish_point('n')\n"
+            "agent = b            # forgot .compile()\n"
+        )
+        monkeypatch.setenv("LANGSTAGE_AGENT_SPEC", "")
+        monkeypatch.setenv("DEEPAGENT_AGENT_SPEC", "")
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", "-a", f"{agent}:agent", "--verify"])
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 1
+        out = capsys.readouterr().out
+        assert "[fail]" in out
+        assert ".compile()" in out                          # actionable, README-promised guidance
+        assert "aget_state" not in out                      # not the leaked internal AttributeError
+        assert "Traceback (most recent call last)" not in out
+
 
 class TestSummarizeSSE:
     """_summarize_sse reduces a /chat SSE stream to (chunks, complete, error) — the

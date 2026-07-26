@@ -620,7 +620,20 @@ def main():
             print(f"[fail] could not load agent: {e}")
             sys.exit(1)
 
-        result = _core_verify(graph)
+        # gh #92: the load succeeds for a non-runnable export — a wrong-TYPE object (a dict,
+        # None, a function) or an uncompiled StateGraph — but building/running that object can
+        # still raise, and an unguarded `_core_verify(graph)` let that escape as a raw 30-line
+        # traceback (wrong-type) or a leaked internal AttributeError string (uncompiled). Guard
+        # the verify call the same way the load above is guarded so any non-runnable export is a
+        # clean `[fail]` verdict + exit 1, never an uncaught crash. core >=1.0.30 already turns
+        # both documented cases into an `ok=False` verdict with actionable guidance ("...got
+        # dict", "call .compile()"); this try/except is the belt-and-suspenders safety net at the
+        # same external-call boundary, so a future/edge case that raises here can't crash --verify.
+        try:
+            result = _core_verify(graph)
+        except Exception as e:  # noqa: BLE001 - report a verify failure cleanly
+            print(f"[fail] could not verify agent: {e}")
+            sys.exit(1)
         if result.ok:
             print(f"[ ok ] agent verified: {result.reason}")
             sys.exit(0)

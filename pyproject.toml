@@ -43,7 +43,12 @@ dependencies = [
     # the floor is what actually delivers it to an existing install (gh #78).
     # >=1.0.27 for HostConfig.config_dict() — the machine-readable twin of describe()
     # that `--show-config --json` renders (gh #88).
-    "langstage-core[agui]>=1.0.27",
+    # >=1.0.30 so a non-runnable agent export (a wrong-TYPE object, or an uncompiled
+    # StateGraph) becomes a clean `ok=False` verify verdict with actionable guidance
+    # ("...got dict", "call .compile()") built INSIDE core's guarded run, instead of
+    # `build_agent` raising an AttributeError that escapes `--verify` as a raw traceback.
+    # This is the choke point that fixes jupyter #92 (sibling of the #66 provider-key case).
+    "langstage-core[agui]>=1.0.30",
     "python-dotenv>=0.19.0",
     "deepagents>=0.1.0",
     # Direct top-level imports in langstage_jupyter/agent.py. Previously only
