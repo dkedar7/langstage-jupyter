@@ -206,6 +206,32 @@ class LabConfig(HostConfig):
         return data
 
 
+def is_bundled_default(cfg: "LabConfig") -> bool:
+    """True when NO agent was configured at all, so the bundled default agent runs.
+
+    The single definition of "the bundled default is in play" — no ``agent_spec`` AND
+    both ``agent_module`` and ``agent_variable`` still coming from the ``default``
+    source. This is the only case where the cheap credential preflight may demand the
+    default model's provider key; a custom/BYO agent selected via ``agent_spec`` OR via
+    ``agent_module`` + ``agent_variable`` is the operator's concern and must not be gated
+    on the default agent's key.
+
+    Shared by the launcher's ``--verify`` preflight and ``/health`` readiness so the two
+    surfaces can't disagree about the identical config — keying this off ``agent_spec``
+    alone is exactly what made both wrongly demand ``ANTHROPIC_API_KEY`` for a keyless
+    module+variable agent (gh #90 for ``--verify``, gh #94 for ``/health``). Pure over the
+    passed ``cfg`` (no module reads) so ``--verify`` can drive it off a live
+    ``LabConfig.resolve()`` while ``/health`` drives it off the frozen ``_cfg``.
+    """
+    if str(getattr(cfg, "agent_spec", "") or "").strip():
+        return False
+    sources = getattr(cfg, "sources", {}) or {}
+    return (
+        sources.get("agent_module") == "default"
+        and sources.get("agent_variable") == "default"
+    )
+
+
 # Module-level constants derived from LabConfig, for call sites that read
 # ``config.X`` (agent.py, agent_wrapper.py). TOML is ON so these honor
 # ``langstage.toml`` — the same resolution ``--show-config`` advertises.

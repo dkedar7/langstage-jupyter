@@ -328,3 +328,103 @@ def test_a_dead_cached_kernel_client_is_replaced(fake_kernel):
 
     assert second is not first, "a dead client must be evicted, not reused forever"
     assert first.stopped and second.waited
+
+
+# ── kernel lookup: EXACT path, never substring (gh #96) ──────────────
+
+
+def _fake_sessions(monkeypatch, sessions):
+    class Resp:
+        status_code = 200
+
+        def json(self):
+            return sessions
+
+    monkeypatch.setattr(nt.requests, "get", lambda *a, **k: Resp())
+
+
+def test_kernel_lookup_matches_exact_path_not_substring(monkeypatch):
+    # gh #96: "a.ipynb" is a substring of "data.ipynb" ("data.ipynb".endswith("a.ipynb")).
+    # A substring match resolved a.ipynb to data.ipynb's kernel, so execute_cell("a.ipynb")
+    # ran in data.ipynb's namespace (state bleed) and saved outputs back into a.ipynb.
+    # Each notebook must resolve to its OWN session by exact path.
+    _fake_sessions(monkeypatch, [
+        {"notebook": {"path": "data.ipynb"}, "kernel": {"id": "KID-DATA"}},
+        {"notebook": {"path": "a.ipynb"}, "kernel": {"id": "KID-A"}},
+    ])
+    assert nt.get_notebook_kernel_id("a.ipynb") == "KID-A"        # not KID-DATA
+    assert nt.get_notebook_kernel_id("data.ipynb") == "KID-DATA"
+
+
+def test_short_name_does_not_borrow_a_longer_notebooks_kernel(monkeypatch):
+    # Only data.ipynb has a live kernel; a.ipynb (its suffix) has none. The lookup must
+    # raise ValueError (no session) so a FRESH kernel is started for a.ipynb — never
+    # silently reuse data.ipynb's, which is the cross-notebook bleed (gh #96).
+    _fake_sessions(monkeypatch, [
+        {"notebook": {"path": "data.ipynb"}, "kernel": {"id": "KID-DATA"}},
+    ])
+    assert nt.get_notebook_kernel_id("data.ipynb") == "KID-DATA"
+    with pytest.raises(ValueError):
+        nt.get_notebook_kernel_id("a.ipynb")
+
+
+def test_kernel_lookup_normalizes_leading_slashes(monkeypatch):
+    # A leading-slash request normalizes to the same path as the session, so it still
+    # matches exactly (the normalization is what makes exact-match robust).
+    _fake_sessions(monkeypatch, [
+        {"notebook": {"path": "nb.ipynb"}, "kernel": {"id": "KID"}},
+    ])
+    assert nt.get_notebook_kernel_id("/nb.ipynb") == "KID"
+
+
+# ── create_notebook in a missing subdirectory (gh #97) ───────────────
+
+
+def test_create_notebook_in_missing_subdir_offline(offline, ws):
+    # gh #97: create_notebook("reports/sub/x.ipynb") when reports/ doesn't exist used to
+    # raise an uncaught FileNotFoundError (the contents-API PUT 500s, then the filesystem
+    # fallback nbformat.write raises). It must instead mkdir -p the parent and create the
+    # notebook — there's no separate folder tool, so this is the agent's only way to nest.
+    out = nt.create_notebook("reports/sub/summary.ipynb")
+    assert isinstance(out, str) and out.startswith("Created")
+    assert (ws / "reports" / "sub" / "summary.ipynb").exists()
+    assert _cells("reports/sub/summary.ipynb") == []  # a valid, empty notebook
+
+
+def test_create_notebook_bare_filename_still_works(offline, ws):
+    # The parent-dir logic must be a no-op for a top-level notebook (no crash, no stray dir).
+    out = nt.create_notebook("top.ipynb")
+    assert out.startswith("Created")
+    assert (ws / "top.ipynb").exists()
+
+
+def test_create_notebook_creates_parent_dir_via_server(monkeypatch, ws):
+    # With a live server, the parent directory is created through the contents API (PUT
+    # type=directory) before the notebook PUT — so the server's root_dir stays the
+    # authority and the notebook write no longer 500s on a missing parent (gh #97).
+    puts = []
+
+    class Resp:
+        status_code = 201
+
+        def json(self):
+            return {}
+
+    def fake_get(url, **kw):
+        r = Resp()
+        r.status_code = 404  # _notebook_exists: not there yet
+        return r
+
+    def fake_put(url, **kw):
+        puts.append((url, kw.get("json", {}).get("type")))
+        return Resp()
+
+    monkeypatch.setattr(nt.requests, "get", fake_get)
+    monkeypatch.setattr(nt.requests, "put", fake_put)
+
+    out = nt.create_notebook("analysis/report.ipynb")
+    assert out.startswith("Created")
+    # The parent dir was created (type=directory) BEFORE the notebook (type=notebook).
+    types_by_path = {url.rsplit("/api/contents/", 1)[-1]: typ for url, typ in puts}
+    assert types_by_path.get("analysis") == "directory"
+    assert types_by_path.get("analysis/report.ipynb") == "notebook"

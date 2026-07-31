@@ -752,6 +752,39 @@ class TestVerifyFlag:
         assert "ANTHROPIC_API_KEY" not in out                     # not the bundled default's key check
         assert "agent verified" in out
 
+    def test_verify_hitl_interrupt_agent_passes_exit_zero(self, monkeypatch, capsys, tmp_path):
+        # gh #95: a healthy human-in-the-loop agent whose first turn calls interrupt()
+        # is a HEALTHY preflight, not a failure. core >=1.0.31 (the floor this package
+        # declares) makes verify() treat a well-formed interrupt as ok=True, so --verify
+        # must exit 0 — not the old `[fail] ... turn paused on an interrupt (did not
+        # complete cleanly)`. Keyless, so it needs no ANTHROPIC_API_KEY. Runs the REAL
+        # core verify against a REAL compiled HITL graph (asserts the floor delivers).
+        agent = tmp_path / "hitl_agent.py"
+        agent.write_text(
+            "from langgraph.graph import StateGraph, START, END, MessagesState\n"
+            "from langgraph.types import interrupt\n"
+            "from langgraph.checkpoint.memory import MemorySaver\n"
+            "from langchain_core.messages import AIMessage\n"
+            "def node(state: MessagesState):\n"
+            "    decision = interrupt({'question': 'Approve running this step?'})\n"
+            "    return {'messages': [AIMessage(content=f'Resumed decision={decision!r}. Done.')]}\n"
+            "_b = StateGraph(MessagesState)\n"
+            "_b.add_node('node', node)\n"
+            "_b.add_edge(START, 'node')\n"
+            "_b.add_edge('node', END)\n"
+            "graph = _b.compile(checkpointer=MemorySaver())\n"
+        )
+        monkeypatch.setenv("LANGSTAGE_AGENT_SPEC", "")
+        monkeypatch.setenv("DEEPAGENT_AGENT_SPEC", "")
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", "-a", f"{agent}:graph", "--verify"])
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 0
+        out = capsys.readouterr().out
+        assert "agent verified" in out
+        assert "[fail]" not in out
+
     def test_verify_broken_agent_fails_exit_one(self, monkeypatch, capsys, tmp_path):
         agent = tmp_path / "broken.py"
         agent.write_text(
@@ -829,8 +862,9 @@ class TestVerifyFlag:
 
 
 class TestSummarizeSSE:
-    """_summarize_sse reduces a /chat SSE stream to (chunks, complete, error) — the
-    verdict logic behind --serve-check, unit-tested without a server (gh #56)."""
+    """_summarize_sse reduces a /chat SSE stream to (chunks, complete, error,
+    saw_interrupt) — the verdict logic behind --serve-check, unit-tested without a
+    server (gh #56, gh #95)."""
 
     def test_clean_stream_counts_chunks_and_completion(self):
         lines = [
@@ -839,32 +873,48 @@ class TestSummarizeSSE:
             "",  # SSE blank separators are ignored
             'data: {"status": "complete"}',
         ]
-        chunks, complete, error = _summarize_sse(lines)
+        chunks, complete, error, saw_interrupt = _summarize_sse(lines)
         assert chunks == 2
         assert complete is True
         assert error is None
+        assert saw_interrupt is False
 
     def test_bytes_lines_are_decoded(self):
         # urllib streams bytes; the helper must handle them (the real path).
         lines = [b'data: {"status": "streaming", "chunk": "hi"}', b'data: {"status": "complete"}']
-        chunks, complete, error = _summarize_sse(lines)
-        assert chunks == 1 and complete is True and error is None
+        chunks, complete, error, saw_interrupt = _summarize_sse(lines)
+        assert chunks == 1 and complete is True and error is None and saw_interrupt is False
 
     def test_error_frame_is_captured(self):
         lines = ['data: {"status": "error", "error": "kaboom"}']
-        chunks, complete, error = _summarize_sse(lines)
+        chunks, complete, error, _saw_interrupt = _summarize_sse(lines)
         assert error == "kaboom"
         assert complete is False
 
     def test_incomplete_stream_has_no_completion(self):
         lines = ['data: {"status": "streaming", "chunk": "x"}']  # no complete frame
-        chunks, complete, error = _summarize_sse(lines)
+        chunks, complete, error, _saw_interrupt = _summarize_sse(lines)
         assert chunks == 1 and complete is False and error is None
 
     def test_non_data_and_malformed_lines_ignored(self):
         lines = ["event: ping", "data: not json", 'data: {"status": "complete"}']
-        chunks, complete, error = _summarize_sse(lines)
+        chunks, complete, error, _saw_interrupt = _summarize_sse(lines)
         assert chunks == 0 and complete is True and error is None
+
+    def test_interrupt_frame_is_a_valid_hitl_pause(self):
+        # A human-in-the-loop first turn: an interrupt frame then a clean complete,
+        # with ZERO content chunks. That's healthy — the HITL feature working — not an
+        # incomplete turn (gh #95).
+        lines = [
+            'data: {"status": "interrupt", "interrupt": {"action_requests": '
+            '[{"question": "Approve?"}]}}',
+            'data: {"status": "complete"}',
+        ]
+        chunks, complete, error, saw_interrupt = _summarize_sse(lines)
+        assert chunks == 0
+        assert complete is True
+        assert error is None
+        assert saw_interrupt is True
 
 
 class TestServeCheckRouting:
@@ -959,6 +1009,72 @@ class TestServeCheckServerSpawn:
         assert code == 1
         assert "exited before it was ready" in out
         assert "Running as root" in out  # the actual diagnostic is now shown
+
+    def test_hitl_interrupt_turn_is_ok_not_incomplete(self, monkeypatch, capsys):
+        # gh #95: a served HITL turn pauses on a well-formed interrupt — zero content
+        # chunks, then a clean complete, no error. serve_check must return 0 with the
+        # interrupt-ok verdict, NOT the false `[fail] ... incomplete turn (streamed 0
+        # chunk(s), complete=True)`. Drives serve_check against a fake live server that
+        # serves the exact HITL SSE frames the runtime emits.
+        import io
+        import json as _json
+        import urllib.request
+
+        class _AliveProc:
+            returncode = None
+            stdout = io.StringIO("")
+
+            def poll(self):
+                return None  # still running (never died)
+
+            def terminate(self):
+                pass
+
+            def wait(self, timeout=None):
+                return 0
+
+            def kill(self):
+                pass
+
+        monkeypatch.setattr(
+            "langstage_jupyter.launcher.subprocess.Popen", lambda *a, **k: _AliveProc()
+        )
+        monkeypatch.setattr(
+            "langstage_jupyter.launcher.find_available_port", lambda *a, **k: 12321
+        )
+
+        class _Resp:
+            def __init__(self, body=b"", lines=None):
+                self._body = body
+                self._lines = lines or []
+
+            def read(self):
+                return self._body
+
+            def __iter__(self):
+                return iter(self._lines)
+
+        def fake_urlopen(req, timeout=None):
+            url = getattr(req, "full_url", req)
+            if url.endswith("/health"):
+                return _Resp(
+                    body=_json.dumps({"agent_loaded": True, "agent_name": "HITL"}).encode()
+                )
+            if url.endswith("/chat"):
+                return _Resp(lines=[
+                    b'data: {"status": "interrupt", "interrupt": {"action_requests": '
+                    b'[{"question": "Approve?"}]}}',
+                    b'data: {"status": "complete"}',
+                ])
+            raise AssertionError(f"unexpected url {url}")
+
+        monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+        code = serve_check("hitl.py:graph")
+        out = capsys.readouterr().out
+        assert code == 0
+        assert "paused on interrupt (HITL agent)" in out
+        assert "incomplete turn" not in out
 
 
 @pytest.mark.skipif(

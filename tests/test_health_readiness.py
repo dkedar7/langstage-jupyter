@@ -7,6 +7,8 @@ credential preflight for the default agent's provider, surfacing a distinct `nee
 state (amber) with an actionable message.
 """
 
+import types
+
 import langstage_jupyter.handlers as handlers
 
 
@@ -26,10 +28,26 @@ def _use_agent(monkeypatch, obj):
     monkeypatch.setattr(handlers, "get_agent", lambda: type("W", (), {"agent": obj})())
 
 
+def _set_cfg(monkeypatch, *, agent_spec=None, module_source="default", variable_source="default"):
+    """Point config._cfg at a synthetic resolved config.
+
+    Readiness scopes its default-agent key check through config.is_bundled_default(config._cfg)
+    — no spec AND agent_module/variable both from the ``default`` source — the same predicate
+    --verify uses (gh #90/#94). Drive that predicate by faking _cfg's agent_spec + sources.
+    """
+    from langstage_jupyter import config
+
+    cfg = types.SimpleNamespace(
+        agent_spec=agent_spec,
+        sources={"agent_module": module_source, "agent_variable": variable_source},
+    )
+    monkeypatch.setattr(config, "_cfg", cfg, raising=False)
+
+
 def _default_anthropic(monkeypatch):
     from langstage_jupyter import config
 
-    monkeypatch.setattr(config, "AGENT_SPEC", None, raising=False)  # bundled default agent
+    _set_cfg(monkeypatch)  # bundled default agent: no spec, module/variable both "default"
     monkeypatch.setattr(config, "MODEL_NAME", "anthropic:claude-sonnet-4-6", raising=False)
 
 
@@ -65,14 +83,28 @@ def test_uncompiled_graph_is_not_runnable(monkeypatch):
 
 def test_custom_agent_skips_the_default_key_check(monkeypatch):
     # A BYO agent's credentials are the operator's concern — no default-key preflight.
-    from langstage_jupyter import config
-
-    monkeypatch.setattr(config, "AGENT_SPEC", "my_agent.py:graph", raising=False)
+    _set_cfg(monkeypatch, agent_spec="my_agent.py:graph")
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     _use_agent(monkeypatch, _RunnableGraph())
 
     status, ready, _ = handlers._agent_readiness()
     assert status == "healthy" and ready is True
+
+
+def test_keyless_module_variable_agent_is_ready(monkeypatch):
+    # gh #94: a keyless CUSTOM agent selected via LANGSTAGE_AGENT_MODULE +
+    # LANGSTAGE_AGENT_VARIABLE (no agent_spec, so both sources are "env", not "default")
+    # must report READY — /health must NOT demand ANTHROPIC_API_KEY for it, the same way
+    # its sibling --verify passes on the identical config (gh #90). Before the fix,
+    # _missing_default_agent_key keyed off AGENT_SPEC alone: an empty spec fell through to
+    # the bundled default's key check and reported the working custom agent as needs_setup.
+    _set_cfg(monkeypatch, module_source="env", variable_source="env")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    _use_agent(monkeypatch, _RunnableGraph())
+
+    status, ready, message = handlers._agent_readiness()
+    assert status == "healthy" and ready is True
+    assert "ANTHROPIC_API_KEY" not in message  # not the bundled default's key check
 
 
 def test_not_loaded_reports_agent_not_loaded(monkeypatch):
