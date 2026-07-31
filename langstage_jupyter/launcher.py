@@ -221,17 +221,21 @@ SERVE_CHECK_ROUTE = "langstage-jupyter"
 
 
 def _summarize_sse(lines):
-    """Reduce a ``/chat`` SSE stream to ``(chunk_count, saw_complete, error)``.
+    """Reduce a ``/chat`` SSE stream to ``(chunk_count, saw_complete, error, saw_interrupt)``.
 
     Pure so it is unit-testable without booting a server. ``lines`` is any
     iterable of raw SSE lines; only ``data: {json}`` lines carry frames. A frame
     with a non-empty ``chunk`` counts; ``{"status": "complete"}`` ends it cleanly;
-    ``{"status": "error"}`` (or an ``error`` key) captures the failure message.
+    ``{"status": "error"}`` (or an ``error`` key) captures the failure message; and
+    ``{"status": "interrupt"}`` is a valid human-in-the-loop pause — a turn that
+    reached a well-formed interrupt streamed zero content chunks but is HEALTHY, so
+    ``serve_check`` must not read it as an incomplete turn (gh #95).
     """
     import json as _json
 
     chunk_count = 0
     saw_complete = False
+    saw_interrupt = False
     error = None
     for raw in lines:
         if isinstance(raw, bytes):  # urllib streams bytes lines; tests pass str
@@ -249,9 +253,11 @@ def _summarize_sse(lines):
             chunk_count += 1
         if frame.get("status") == "complete":
             saw_complete = True
+        if frame.get("status") == "interrupt" or frame.get("interrupt"):
+            saw_interrupt = True
         if frame.get("status") == "error" or frame.get("error"):
             error = frame.get("error") or frame.get("message") or "agent error"
-    return chunk_count, saw_complete, error
+    return chunk_count, saw_complete, error, saw_interrupt
 
 
 def serve_check(agent_spec=None, *, boot_timeout=45.0, turn_timeout=60.0):
@@ -357,7 +363,7 @@ def serve_check(agent_spec=None, *, boot_timeout=45.0, turn_timeout=60.0):
                 "/chat", data={"message": "serve-check ping", "thread_id": "serve-check"},
                 timeout=turn_timeout,
             )
-            chunks, complete, error = _summarize_sse(iter(resp))
+            chunks, complete, error, saw_interrupt = _summarize_sse(iter(resp))
         except urllib.error.HTTPError as e:
             print(f"[fail] serve-check: POST /{SERVE_CHECK_ROUTE}/chat returned HTTP {e.code} "
                   f"({e.reason})")
@@ -369,12 +375,22 @@ def serve_check(agent_spec=None, *, boot_timeout=45.0, turn_timeout=60.0):
         if error is not None:
             print(f"[fail] serve-check: the served turn errored: {error}")
             return 1
+
+        name = health.get("agent_name") or spec
+        # A human-in-the-loop agent's first turn pauses on a well-formed interrupt: it
+        # streams zero content chunks but ends cleanly with {"status": "complete"} and no
+        # error. That's the advertised HITL feature working — a HEALTHY served turn — so
+        # it must be a distinct [ ok ] verdict, not the "incomplete turn (streamed 0
+        # chunk(s), complete=True)" false [fail] the chunks<1 gate used to give (gh #95).
+        if saw_interrupt and complete:
+            print(f"[ ok ] served turn paused on interrupt (HITL agent) — endpoint healthy: "
+                  f"agent={name!r} (routes under /{SERVE_CHECK_ROUTE}/)")
+            return 0
         if chunks < 1 or not complete:
             print(f"[fail] serve-check: incomplete turn "
                   f"(streamed {chunks} chunk(s), complete={complete})")
             return 1
 
-        name = health.get("agent_name") or spec
         print(f"[ ok ] served turn verified: agent={name!r}, streamed {chunks} chunks, "
               f"completed cleanly (routes under /{SERVE_CHECK_ROUTE}/)")
         return 0
@@ -568,11 +584,11 @@ def main():
     # chat). Uses --demo for a keyless check. (ADR 0004)
     if "--verify" in args:
         from langstage_core.agui import verify as _core_verify
+        from langstage_jupyter import config
         from langstage_jupyter.agent_wrapper import AgentWrapper
         from langstage_jupyter.config import LabConfig
 
         cfg = LabConfig.resolve()
-        spec = str(cfg.agent_spec or "").strip()
 
         # Resolve the agent the SAME way the sidebar runtime (AgentWrapper) does —
         # agent_spec, else agent_module (+ agent_variable), else the bundled default — by
@@ -594,13 +610,9 @@ def main():
         # module+variable is the operator's concern and gets the full one-real-turn check
         # below. Keying this off `not spec` alone is exactly what made --verify demand
         # ANTHROPIC_API_KEY for a keyless module+variable agent that never needed it — for
-        # "the default agent" the user never configured (gh #90).
-        is_bundled_default = (
-            not spec
-            and cfg.sources.get("agent_module") == "default"
-            and cfg.sources.get("agent_variable") == "default"
-        )
-        if is_bundled_default:
+        # "the default agent" the user never configured (gh #90). The predicate lives in
+        # config.is_bundled_default so --verify and /health can't drift (gh #94).
+        if config.is_bundled_default(cfg):
             from langstage_jupyter import handlers
 
             missing = handlers._missing_provider_key(str(cfg.model_name or "").strip())

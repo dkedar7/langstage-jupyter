@@ -53,9 +53,12 @@ jobs:
         # is exactly what happened on gh #78 (>=1.0.21 carries the TOML type
         # coercion). >=1.0.30 carries the guarded verify build that turns a
         # non-runnable agent export into a clean ok=False verdict (jupyter #92), which
-        # the --verify regression tests here assert. The `minimal-install` job is what
+        # the --verify regression tests here assert. >=1.0.31 makes verify() treat a
+        # well-formed interrupt as a HEALTHY preflight (ok=True), which the HITL
+        # --verify regression test here asserts (jupyter #95) — without it CI tests
+        # against a stale core and that test fails. The `minimal-install` job is what
         # exercises the declared deps.
-        pip install "langstage-core[agui]>=1.0.30"
+        pip install "langstage-core[agui]>=1.0.31"
         pip install nbformat requests tornado traitlets jupyter_client
 
     - name: Add package to Python path

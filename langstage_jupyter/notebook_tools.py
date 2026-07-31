@@ -91,6 +91,41 @@ def _load_notebook(notebook_path: str) -> nbformat.NotebookNode:
         raise NotebookNotFound(notebook_path) from e
 
 
+def _ensure_parent_dirs(notebook_path: str) -> None:
+    """Best-effort ``mkdir -p`` for a notebook's parent directory (gh #97).
+
+    ``create_notebook("reports/summary.ipynb")`` must work even when ``reports/``
+    doesn't exist yet — the toolset ships no separate folder tool, so if the parent
+    is missing the agent is otherwise stuck (the contents-API ``PUT`` 500s and the
+    filesystem fallback ``nbformat.write`` raises an uncaught ``FileNotFoundError``).
+    Walk each ancestor segment and create it through the server contents API (so the
+    server's ``root_dir`` stays the single authority), falling back to
+    ``os.makedirs`` on disk when the server is unreachable — the same server-first /
+    disk-fallback shape as the two I/O primitives above."""
+    parent = _norm(notebook_path).rpartition("/")[0]
+    if not parent:
+        return  # a bare filename — no parent to create
+
+    segments = parent.split("/")
+    try:
+        built = ""
+        for seg in segments:
+            built = f"{built}/{seg}" if built else seg
+            resp = requests.put(
+                _contents_url(built),
+                headers=_headers(),
+                json={"type": "directory"},
+                timeout=_HTTP_TIMEOUT,
+            )
+            # A directory PUT is idempotent (an existing dir returns 200/201). Any
+            # other status means the server won't create it — fall back to disk.
+            if resp.status_code not in (200, 201):
+                os.makedirs(parent, exist_ok=True)
+                return
+    except requests.RequestException:
+        os.makedirs(parent, exist_ok=True)
+
+
 def _save_notebook(nb: nbformat.NotebookNode, notebook_path: str) -> None:
     """Write a notebook back through the same authority :func:`_load_notebook`
     read it from — the server first (which also keeps the open tab in sync and
@@ -106,6 +141,12 @@ def _save_notebook(nb: nbformat.NotebookNode, notebook_path: str) -> None:
             return
     except requests.RequestException:
         pass
+    # Ensure the parent exists so a notebook in a not-yet-created subdirectory writes
+    # cleanly instead of raising an uncaught FileNotFoundError (gh #97). No-op for a
+    # bare filename or an already-present dir.
+    parent = os.path.dirname(notebook_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
     nbformat.write(nb, notebook_path)
 
 
@@ -161,8 +202,16 @@ def get_notebook_kernel_id(notebook_path: str) -> str:
     )
     if response.status_code != 200:
         raise ValueError(f"Cannot connect to Jupyter server at {JUPYTER_SERVER_URL}")
+    # Match the session by EXACT normalized path, not substring containment. The old
+    # ``notebook_path in session[...]["path"]`` test is Python substring containment,
+    # so a short name that is a suffix of a longer notebook wrongly matched its
+    # session — ``"a.ipynb" in "data.ipynb"`` is True — and execute_cell("a.ipynb")
+    # ran in data.ipynb's kernel, silently sharing/clobbering its namespace while
+    # saving outputs back into a.ipynb (gh #96). Both sides are normalized the same
+    # way so the comparison is on the real path, not raw containment.
+    target = _norm(notebook_path)
     for session in response.json():
-        if notebook_path in session["notebook"]["path"]:
+        if _norm(session.get("notebook", {}).get("path", "")) == target:
             return session["kernel"]["id"]
     raise ValueError(f"No running kernel found for {notebook_path}")
 
@@ -306,7 +355,15 @@ def create_notebook(
             "overwritten). Use it directly, or call create_notebook with "
             "overwrite=True to replace it, which DESTROYS its existing cells."
         )
-    _save_notebook(nbformat.v4.new_notebook(), notebook_path)
+    # mkdir -p the parent so a notebook in a not-yet-created subdirectory is created
+    # instead of crashing with an uncaught FileNotFoundError — there's no separate
+    # folder tool, so this is the only way the agent can organize notebooks under a
+    # subdir (gh #97). Never raises: return a clean Error string if the write fails.
+    try:
+        _ensure_parent_dirs(notebook_path)
+        _save_notebook(nbformat.v4.new_notebook(), notebook_path)
+    except OSError as e:
+        return f"Error: could not create notebook at {notebook_path}: {e}"
     return f"Created new notebook at {notebook_path}"
 
 

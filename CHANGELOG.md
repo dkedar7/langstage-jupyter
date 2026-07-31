@@ -1,5 +1,57 @@
 # Changelog
 
+## 0.6.26 - 2026-07-31
+
+### Fixed
+- **`/health` no longer falsely reports "not ready — ANTHROPIC_API_KEY not set" for a
+  keyless custom agent selected via `LANGSTAGE_AGENT_MODULE` + `LANGSTAGE_AGENT_VARIABLE`
+  (gh #94).** gh #90 fixed this exact defect class for `--verify` but the parallel
+  `/health` readiness gate was left behind, so the two preflight surfaces disagreed about
+  the identical config: `--verify` ran a real turn and passed, while `/health` reported the
+  agent as `needs_setup` (amber sidebar dot + a misleading "set `ANTHROPIC_API_KEY`"
+  tooltip). Root cause: `handlers._missing_default_agent_key()` scoped the "is this the
+  bundled default agent?" test to `AGENT_SPEC` **alone**, so an agent selected via the
+  split module+variable form (which leaves `agent_spec` empty) fell through to the default
+  model's provider-key check — the very mistake gh #90 called out. The gh #90
+  `is_bundled_default` predicate (no spec **and** both `agent_module`/`agent_variable` from
+  the `default` source) is now factored into one shared helper, `config.is_bundled_default`,
+  that **both** `--verify` and `/health` call, so the two surfaces can't drift again.
+- **`--serve-check` and `--verify` no longer report a false `[fail]` for a valid
+  human-in-the-loop (interrupting) agent (gh #95).** Human-in-the-Loop is a headline
+  feature and `--verify`/`--serve-check` are the advertised CI preflights, but a healthy
+  HITL agent (whose first turn calls `interrupt()` to pause for approval) got a red build on
+  every run — the preflights didn't recognize an `interrupt` frame as a legitimate turn
+  outcome. Two parts:
+  - **`--serve-check` (Jupyter-local):** `_summarize_sse()` ignored the `interrupt` status
+    frame and `serve_check()` hard-required `chunks >= 1`, so a HITL turn (0 content chunks,
+    `complete=True`, no error) produced the self-contradictory `[fail] … incomplete turn
+    (streamed 0 chunk(s), complete=True)`. `_summarize_sse()` now captures `saw_interrupt`,
+    and `serve_check()` treats `saw_interrupt and complete` as success with a distinct
+    verdict: `[ ok ] served turn paused on interrupt (HITL agent) — endpoint healthy`.
+  - **`--verify` (core's `verify()`):** the fix is delivered by raising the `langstage-core`
+    floor to **>=1.0.31**, whose `verify()` treats a well-formed interrupt as a HEALTHY
+    preflight (`ok=True`, "turn paused cleanly on an interrupt (HITL agent)"). The CI
+    test-job's hand-listed core floor is bumped in lockstep (gh #78 precedent). **Requires
+    `langstage-core >=1.0.31`.**
+- **Notebook tools no longer attach to the WRONG kernel via a substring path match
+  (gh #96).** `get_notebook_kernel_id()` matched a notebook to its running kernel session
+  with `notebook_path in session["notebook"]["path"]` — Python **substring** containment —
+  so a short name that is a suffix of a longer notebook wrongly resolved to that notebook's
+  kernel (`"a.ipynb" in "data.ipynb"` is `True`). `execute_cell("a.ipynb")` then ran in
+  `data.ipynb`'s kernel, silently sharing and clobbering its namespace while saving outputs
+  back into `a.ipynb` — cross-notebook state bleed in the core execute path. The lookup now
+  compares **normalized paths for equality**, so each notebook resolves only to its own
+  session (and a notebook with no session gets a fresh, isolated kernel).
+- **`create_notebook()` no longer crashes with an uncaught `FileNotFoundError` for a
+  notebook in a non-existent subdirectory (gh #97).** `create_notebook("reports/x.ipynb")`
+  when `reports/` didn't exist raised a raw traceback (the contents-API `PUT` 500s, then the
+  filesystem fallback `nbformat.write` raises) — breaking the tool's `"Error: …"` contract,
+  with **no** folder tool for the agent to recover with. `create_notebook()` now does a
+  `mkdir -p` of the parent (server-first via the contents API `PUT {"type": "directory"}`,
+  falling back to `os.makedirs` on disk) before writing, so the agent can organize notebooks
+  under a subdirectory; any write failure returns a clean `"Error: …"` string rather than
+  raising.
+
 ## 0.6.25 - 2026-07-26
 
 ### Fixed

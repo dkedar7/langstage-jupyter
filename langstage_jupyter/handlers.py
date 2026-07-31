@@ -66,11 +66,18 @@ def _missing_default_agent_key() -> Optional[str]:
     auth error (gh #60). A custom/BYO agent's credentials are the operator's concern, so
     this preflight is scoped to the default agent, where the model spec (and thus the
     required key) is known.
+
+    Scopes "is this the bundled default?" through the shared ``config.is_bundled_default``
+    predicate — no spec AND agent_module/variable both from the ``default`` source — the
+    SAME gate ``--verify`` uses (gh #90). Keying it off ``AGENT_SPEC`` alone wrongly demanded
+    ``ANTHROPIC_API_KEY`` for a keyless agent selected via ``LANGSTAGE_AGENT_MODULE`` +
+    ``LANGSTAGE_AGENT_VARIABLE`` (an empty spec), so ``/health`` reported that custom agent as
+    not-ready while its sibling ``--verify`` passed on the identical config (gh #94).
     """
     from . import config
 
-    if config.AGENT_SPEC:  # a custom agent was configured -> not our concern
-        return None
+    if not config.is_bundled_default(config._cfg):
+        return None  # a custom agent was configured -> its credentials are not our concern
     return _missing_provider_key((getattr(config, "MODEL_NAME", "") or "").strip())
 
 
