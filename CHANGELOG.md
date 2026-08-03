@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.6.27 - 2026-08-03
+
+### Fixed
+- **Default `LANGSTAGE_JUPYTER_SERVER_URL` is now `http://localhost:8888`, matching the
+  docs and the launcher, so `--check-connection` no longer false-fails the documented
+  manual setup (gh #99).** The resolved default was `http://localhost:8889`, but every
+  other artifact in the manual-config flow uses `:8888` — the launcher's own port scan
+  (`find_available_port(start_port=8888)`), the README's `jupyter lab --port 8888`
+  walkthrough, and every `--check-connection` example. A user who relied on the default (or
+  copied `.env.example`, which also said `:8889`) got a preflight that probed `:8889` and
+  reported `[fail] … unreachable` against a Jupyter that was actually up and correctly
+  configured at `:8888`. The `config.py` default and `.env.example` are now both `:8888`,
+  and a test pins the default equal to the launcher's start port so they can't drift again.
+
+### Added
+- **`--ask "<prompt>"`: a headless one-shot chat that prints the agent's ACTUAL reply, then
+  exits (gh #101).** `--verify` / `--serve-check` / `--check-connection` prove the *plumbing*
+  is healthy but never show what the agent *said*, so confirming a custom agent produced the
+  right *content* meant booting JupyterLab, digging the token out of the log, and hand-crafting
+  an SSE `curl`. `langstage-jupyter -a my_agent.py:graph --ask "summarize data.csv"` now runs
+  ONE turn and prints the reply — the terminal inner loop (change agent -> see what it says),
+  no browser, no persistent server, no token juggling. It resolves the agent the SAME way
+  `--verify` and the sidebar runtime do (honoring `-a` / `--demo` / `LANGSTAGE_AGENT_SPEC`
+  and the split `LANGSTAGE_AGENT_MODULE` + `LANGSTAGE_AGENT_VARIABLE`), runs the turn through
+  the shipped core one-shot primitive over the same chunk wire the sidebar's `/chat` serves
+  (`collect_chunk_frames`), prints the reply to **stdout** and status/verdict to **stderr**
+  (so `--ask … | grep` sees only the agent's words), and exits with the family's one-shot
+  code: `0` complete / `1` error / `2` interrupted. Keyless via `--demo`, so it runs in CI
+  with no API key: `langstage-jupyter --demo --ask "hello"`.
+
 ## 0.6.26 - 2026-07-31
 
 ### Fixed

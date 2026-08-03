@@ -104,7 +104,13 @@ class TestConfigConstants:
         assert config.AGENT_VARIABLE is None
         assert config.AGENT_SPEC is None
         assert config.JUPYTER_TOKEN == "12345"
-        assert config.JUPYTER_SERVER_URL == "http://localhost:8889"
+        # gh #99: the default server URL must be :8888 — the port the launcher's own
+        # scan starts at, the README's manual-config `jupyter lab --port 8888`, and
+        # every --check-connection example — so relying on the default (or copying
+        # .env.example) doesn't false-fail --check-connection against a live server.
+        from langstage_jupyter import launcher
+        assert config.JUPYTER_SERVER_URL == "http://localhost:8888"
+        assert config.JUPYTER_SERVER_URL == f"http://localhost:{launcher.find_available_port.__defaults__[0]}"
         assert config.MODEL_NAME == "anthropic:claude-sonnet-4-6"
         assert config.MODEL_TEMPERATURE == 0.0
         assert config.DEBUG is False

@@ -7,8 +7,11 @@ import pytest
 from unittest.mock import Mock, patch, MagicMock
 from langstage_jupyter.launcher import (
     DEMO_AGENT_SPEC,
+    _ask_exit_code,
     _connection_verdict,
+    _extract_ask,
     _summarize_sse,
+    ask,
     check_connection,
     extract_agent_args,
     find_available_port,
@@ -219,7 +222,11 @@ class TestShowConfigJson:
         assert spec["legacy_env"] == "DEEPAGENT_AGENT_SPEC"
         assert spec["toml"] == "agent.spec"
         # toml block carries found/path/malformed (no file here → absent, not malformed).
-        assert data["toml"] == {"found": False, "path": None, "malformed": False}
+        # Assert the known-key subset, not exact-dict equality: langstage-core may add
+        # forward-compatible keys to this block (e.g. `unknown_keys` in 1.0.32).
+        assert data["toml"]["found"] is False
+        assert data["toml"]["path"] is None
+        assert data["toml"]["malformed"] is False
         # The launcher-managed keys are omitted from JSON too (same list as the table).
         for key in ("host", "port", "title", "jupyter_token", "jupyter_server_url"):
             assert key not in data["config"], key
@@ -1310,3 +1317,190 @@ def test_bad_port_attempts_env_falls_back_to_default(monkeypatch):
     monkeypatch.setenv("LANGSTAGE_JUPYTER_PORT_ATTEMPTS", "not-a-number")
     _fake_socket_with_busy(monkeypatch, set(range(8888, 8899)))
     assert find_available_port() == 8899  # didn't crash, used the 100-wide default
+
+
+class TestExtractAsk:
+    """--ask PROMPT is stripped from the jupyter-lab passthrough and its value returned."""
+
+    def test_space_form(self):
+        prompt, rest = _extract_ask(["--ask", "hello world", "--no-browser"])
+        assert prompt == "hello world"
+        assert rest == ["--no-browser"]
+
+    def test_equals_form(self):
+        prompt, rest = _extract_ask(["--ask=hi there", "--port", "9000"])
+        assert prompt == "hi there"
+        assert rest == ["--port", "9000"]
+
+    def test_absent_is_none_and_passes_through(self):
+        prompt, rest = _extract_ask(["--no-browser", "--port", "9000"])
+        assert prompt is None
+        assert rest == ["--no-browser", "--port", "9000"]
+
+    def test_empty_prompt_is_kept_distinct_from_absent(self):
+        # --ask="" is an (odd) real prompt, not "feature off" — returned as "".
+        prompt, rest = _extract_ask(["--ask="])
+        assert prompt == ""
+        assert rest == []
+
+
+class TestAskExitCode:
+    """The one-shot exit vocabulary matches the family (complete=0/error=1/interrupted=2)."""
+
+    def test_maps_outcomes(self):
+        assert _ask_exit_code("complete") == 0
+        assert _ask_exit_code("error") == 1
+        assert _ask_exit_code("interrupted") == 2
+
+    def test_unknown_outcome_is_failure(self):
+        assert _ask_exit_code("nonsense") == 1
+
+
+class TestAskFlag:
+    """--ask "<prompt>" runs one turn and PRINTS the reply — the behavior twin of --verify,
+    the terminal inner loop the browser-free dogfooder needs (gh #101)."""
+
+    def test_help_lists_ask(self, monkeypatch, capsys):
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", "--help"])
+        main()
+        assert "--ask" in capsys.readouterr().out
+
+    def test_ask_demo_prints_reply_and_exits_zero(self, monkeypatch, capsys):
+        # The required keyless end-to-end: --demo runs the echo stub with no API key, and
+        # --ask prints its ACTUAL reply, exit 0. This is the "did my agent say the right
+        # thing?" the health preflights structurally can't answer.
+        monkeypatch.setenv("LANGSTAGE_AGENT_SPEC", "")
+        monkeypatch.setenv("DEEPAGENT_AGENT_SPEC", "")
+        monkeypatch.setattr(
+            "sys.argv", ["langstage-jupyter", "--demo", "--ask", "hello agent"]
+        )
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 0
+        out = capsys.readouterr().out
+        # The keyless stub echoes the prompt back — proof the reply text really flowed.
+        assert "hello agent" in out
+
+    def test_ask_stdout_is_only_the_reply(self, monkeypatch, capsys):
+        # Pipe-friendliness (gh #101): stdout carries ONLY the reply; the resolver's
+        # progress noise ("Using agent from environment: ...") goes to stderr, so
+        # `--ask ... | grep` sees just the agent's words.
+        monkeypatch.setenv("LANGSTAGE_AGENT_SPEC", "")
+        monkeypatch.setenv("DEEPAGENT_AGENT_SPEC", "")
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", "--demo", "--ask", "ping"])
+        with pytest.raises(SystemExit):
+            main()
+        captured = capsys.readouterr()
+        assert captured.out.strip() == "(demo agent) You said: ping"
+        assert "Using agent from environment" not in captured.out  # noise stayed off stdout
+        assert "Using agent from environment" in captured.err
+
+    def test_ask_honors_module_and_variable_not_the_default(self, monkeypatch, capsys):
+        # gh #90/#101: an agent selected via the DOCUMENTED LANGSTAGE_AGENT_MODULE +
+        # _VARIABLE vars (no agent_spec) must be the one --ask runs — not the bundled
+        # default (which, keyless here, would fail the credential preflight before any
+        # turn). Point the module+variable at the keyless stub graph so a real turn runs.
+        import sys as _sys
+        import types
+
+        from langstage_core.demo.stub import graph as stub_graph
+
+        monkeypatch.setenv("LANGSTAGE_AGENT_MODULE", "mycustom_ask_mod")
+        monkeypatch.setenv("LANGSTAGE_AGENT_VARIABLE", "myagent")
+        monkeypatch.delenv("LANGSTAGE_AGENT_SPEC", raising=False)
+        monkeypatch.delenv("DEEPAGENT_AGENT_SPEC", raising=False)
+        monkeypatch.delenv("DEEPAGENT_AGENT_MODULE", raising=False)
+        monkeypatch.delenv("DEEPAGENT_AGENT_VARIABLE", raising=False)
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+        fake_mod = types.ModuleType("mycustom_ask_mod")
+        fake_mod.myagent = stub_graph  # a real, compiled, keyless graph
+        monkeypatch.setitem(_sys.modules, "mycustom_ask_mod", fake_mod)
+
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", "--ask", "from module var"])
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 0                       # ran keyless — NOT the default's key gate
+        assert "from module var" in capsys.readouterr().out  # the configured agent's reply
+
+    def test_ask_default_agent_missing_key_is_clean_fail_not_a_traceback(
+        self, monkeypatch, capsys
+    ):
+        # With the BUNDLED default agent and no ANTHROPIC_API_KEY, --ask must give the same
+        # actionable one-line verdict --verify gives (name the var) and exit 1 — never a raw
+        # provider TypeError. Short-circuits before building the agent / running a turn.
+        monkeypatch.setenv("LANGSTAGE_AGENT_SPEC", "")
+        monkeypatch.setenv("DEEPAGENT_AGENT_SPEC", "")
+        monkeypatch.delenv("LANGSTAGE_AGENT_MODULE", raising=False)
+        monkeypatch.delenv("LANGSTAGE_AGENT_VARIABLE", raising=False)
+        monkeypatch.delenv("DEEPAGENT_AGENT_MODULE", raising=False)
+        monkeypatch.delenv("DEEPAGENT_AGENT_VARIABLE", raising=False)
+        monkeypatch.delenv("LANGSTAGE_MODEL_NAME", raising=False)
+        monkeypatch.delenv("DEEPAGENT_MODEL_NAME", raising=False)
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", "--ask", "hi"])
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 1
+        captured = capsys.readouterr()
+        assert "ANTHROPIC_API_KEY" in captured.err  # names the exact variable...
+        assert "TypeError" not in captured.err      # ...not a raw provider stack string
+
+    def test_ask_error_outcome_exits_one(self, monkeypatch, capsys):
+        # An agent whose turn ERRORS -> exit 1 with the error on stderr, stdout empty.
+        from langstage_core.agui.collect import TurnResult
+
+        async def fake_collect(agent, message, thread_id, **kw):
+            return TurnResult(text="", outcome="error", error="boom")
+
+        monkeypatch.setattr(
+            "langstage_core.agui.collect.collect_chunk_frames", fake_collect
+        )
+        monkeypatch.setenv("LANGSTAGE_AGENT_SPEC", "")
+        monkeypatch.setenv("DEEPAGENT_AGENT_SPEC", "")
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", "--demo", "--ask", "x"])
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 1
+        captured = capsys.readouterr()
+        assert "boom" in captured.err
+        assert captured.out.strip() == ""
+
+    def test_ask_interrupt_outcome_exits_two(self, monkeypatch, capsys):
+        # A human-in-the-loop pause -> exit 2 (the family's interrupted code), verdict on
+        # stderr. Mirrors langstage-agui --message's 0/1/2 contract.
+        from langstage_core.agui.collect import TurnResult
+
+        async def fake_collect(agent, message, thread_id, **kw):
+            return TurnResult(
+                text="", outcome="interrupted", interrupt={"action_requests": []}
+            )
+
+        monkeypatch.setattr(
+            "langstage_core.agui.collect.collect_chunk_frames", fake_collect
+        )
+        monkeypatch.setenv("LANGSTAGE_AGENT_SPEC", "")
+        monkeypatch.setenv("DEEPAGENT_AGENT_SPEC", "")
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", "--demo", "--ask", "x"])
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 2
+        assert "interrupt" in capsys.readouterr().err.lower()
+
+    def test_ask_load_failure_is_clean_fail(self, monkeypatch, capsys):
+        # A spec that can't load -> clean [fail] on stderr + exit 1, not a traceback.
+        monkeypatch.setattr(
+            "sys.argv",
+            ["langstage-jupyter", "-a", "no_such_module_xyz:graph", "--ask", "hi"],
+        )
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 1
+        assert "could not load agent" in capsys.readouterr().err
+
+
+def test_ask_returns_zero_for_keyless_demo_agent(monkeypatch):
+    """ask() directly (no argv plumbing): the keyless demo agent runs a turn and returns 0."""
+    monkeypatch.setenv("LANGSTAGE_AGENT_SPEC", DEMO_AGENT_SPEC)
+    monkeypatch.setenv("DEEPAGENT_AGENT_SPEC", DEMO_AGENT_SPEC)
+    assert ask("hello", thread_id="ask-unit") == 0

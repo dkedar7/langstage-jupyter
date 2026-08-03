@@ -153,6 +153,24 @@ $ langstage-jupyter --check-connection
 Unlike `--serve-check` (which boots its *own* ephemeral server with a *fresh* token),
 `--check-connection` tests your *configured* URL+token against an *already-running* server.
 
+### One-shot chat (`--ask`)
+
+The preflights above prove the agent *runs*; `--ask "<prompt>"` runs one turn and prints
+what it actually *says* — the terminal inner loop (change agent -> see the reply) with no
+browser, no persistent server, no token juggling. It resolves the agent exactly like
+`--verify` (honoring `-a` / `--demo` / `LANGSTAGE_AGENT_SPEC` / `LANGSTAGE_AGENT_MODULE` +
+`LANGSTAGE_AGENT_VARIABLE`), prints the reply to stdout and status to stderr, and exits
+`0` complete / `1` error / `2` interrupted:
+
+```bash
+# One turn, print the reply, exit
+langstage-jupyter -a my_agent.py:graph --ask "summarize data.csv in one line"
+langstage-jupyter --demo --ask "hello"          # keyless, no API key
+
+# stdout is just the reply, so it pipes cleanly for CI behavior assertions:
+langstage-jupyter -a my_agent.py:graph --ask "2+2?" | grep -q 4
+```
+
 The extension serves its REST/SSE routes under `/<base_url>langstage-jupyter/`:
 `health` (GET), `chat` (POST, SSE), `resume` (POST, SSE), `reload` (POST), `cancel` (POST).
 

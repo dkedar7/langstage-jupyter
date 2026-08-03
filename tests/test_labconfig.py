@@ -25,7 +25,8 @@ def test_defaults(isolated, tmp_path):
     assert cfg.model_name == "anthropic:claude-sonnet-4-6"
     assert cfg.model_temperature == 0.0
     assert cfg.jupyter_token == "12345"
-    assert cfg.jupyter_server_url == "http://localhost:8889"
+    # gh #99: default aligns with the launcher's port scan + docs (:8888), not :8889.
+    assert cfg.jupyter_server_url == "http://localhost:8888"
     assert cfg.virtual_mode is True
     assert cfg.agent_module == "langstage_jupyter.agent"
     assert cfg.agent_variable is None
@@ -301,7 +302,12 @@ def test_config_dict_absent_toml_not_malformed(isolated, tmp_path):
     """Genuine absence: found=false, path=None, malformed=false (no regression)."""
     d = LabConfig.resolve(env={}, toml_start=tmp_path).config_dict(omit_keys=_OMIT)
 
-    assert d["toml"] == {"found": False, "path": None, "malformed": False}
+    # Assert the known-key subset, not exact-dict equality: langstage-core may add
+    # forward-compatible keys to the toml block (e.g. `unknown_keys` in 1.0.32), which
+    # would break an `==` on the whole dict without changing the meaning tested here.
+    assert d["toml"]["found"] is False
+    assert d["toml"]["path"] is None
+    assert d["toml"]["malformed"] is False
 
 
 def test_config_dict_sources_match_describe(isolated, tmp_path):
