@@ -25,7 +25,8 @@ def test_defaults(isolated, tmp_path):
     assert cfg.model_name == "anthropic:claude-sonnet-4-6"
     assert cfg.model_temperature == 0.0
     assert cfg.jupyter_token == "12345"
-    assert cfg.jupyter_server_url == "http://localhost:8889"
+    # gh #99: default aligns with the launcher's port scan + docs (:8888), not :8889.
+    assert cfg.jupyter_server_url == "http://localhost:8888"
     assert cfg.virtual_mode is True
     assert cfg.agent_module == "langstage_jupyter.agent"
     assert cfg.agent_variable is None

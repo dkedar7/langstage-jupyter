@@ -73,6 +73,9 @@ Launcher options:
                      Add --json to emit it as a single machine-readable JSON
                      object (value + source per key) on stdout; exit 0.
   --verify           Preflight the agent (run one real turn); exit 0/1. Then exit.
+  --ask "PROMPT"     Run ONE turn against the resolved agent, print its reply to stdout,
+                     and exit (0 complete / 1 error / 2 interrupted). No browser/server;
+                     the terminal inner loop. Keyless via --demo. Then exit.
   --serve-check      Headless HTTP smoke test: boot the server extension, serve one
                      turn over /langstage-jupyter/chat, exit 0/1. Then exit.
   --check-connection Manual-config preflight: verify LANGSTAGE_JUPYTER_SERVER_URL +
@@ -504,6 +507,149 @@ def check_connection(*, timeout=5.0):
     return code
 
 
+# ── --ask: headless one-shot chat that prints the agent's ACTUAL reply (gh #101) ──
+#
+# --verify / --serve-check / --check-connection all prove the *plumbing* is healthy but
+# never show what the agent actually SAID. --ask closes the inner dev loop from the
+# terminal — change agent -> see the reply — with no browser, no persistent server, no
+# token juggling. The behavior twin of --verify: --verify proves the agent RUNS (its
+# output discarded); --ask runs the user's OWN prompt and prints the reply.
+
+#: The 0/1/2 exit vocabulary the whole family uses for a one-shot turn (matches
+#: langstage-agui --message and --verify): a clean turn is 0, an agent error 1, a
+#: human-in-the-loop interrupt 2.
+def _ask_exit_code(outcome: str) -> int:
+    return {"complete": 0, "error": 1, "interrupted": 2}.get(outcome, 1)
+
+
+def ask(prompt, *, thread_id="ask", turn_timeout=120.0):
+    """Run ONE turn against the configured agent and print its reply; return an exit code.
+
+    Resolves the agent the SAME way ``--verify`` and the sidebar runtime do — an explicit
+    ``agent_spec`` (``-a`` / ``--demo`` / ``LANGSTAGE_AGENT_SPEC``), else the documented
+    ``LANGSTAGE_AGENT_MODULE`` (+ ``LANGSTAGE_AGENT_VARIABLE``), else the bundled default —
+    via ``AgentWrapper``'s own resolver, so ``--ask`` can't preflight a different agent than
+    the one the sidebar runs (the gh #90 lesson). Then it runs one turn through the shipped
+    core one-shot primitive over the **chunk wire the sidebar's ``/chat`` serves**
+    (``collect_chunk_frames`` over ``iter_chunk_frames``), so the reply printed here is the
+    reply the sidebar would show.
+
+    The reply text goes to **stdout** (clean and pipe-friendly, like ``--show-config
+    --json``); every status/verdict line goes to **stderr**, so ``--ask ... | grep`` sees
+    only the agent's words. Exit code mirrors the turn outcome (complete=0 / error=1 /
+    interrupted=2), the same contract as the other preflights and ``langstage-agui
+    --message``. Keyless via ``--demo`` (the echo stub), so it runs in CI with no API key.
+    """
+    import asyncio
+    import contextlib
+
+    from langstage_core.agui.collect import collect_chunk_frames
+    from langstage_jupyter import config, handlers
+    from langstage_jupyter.agent_wrapper import AgentWrapper
+    from langstage_jupyter.config import LabConfig
+
+    loaded_spec = None
+    result = None
+    # Keep stdout pure for the agent's reply (pipe-friendly — `--ask ... | grep`, like
+    # --show-config --json separates its streams). The shared resolver/loader print progress
+    # ("Using agent from environment: ...") to stdout, and a user agent may debug-print
+    # mid-turn; fold ALL of that into stderr for the resolve+load+turn, then print ONLY the
+    # reply to the real stdout below. An early-return failure exits inside this block with
+    # stdout already restored by the context manager.
+    with contextlib.redirect_stdout(sys.stderr):
+        cfg = LabConfig.resolve()
+
+        # Resolve which agent to load off the live cfg (env / langstage.toml, canonical-wins)
+        # — the SAME resolver AgentWrapper.__init__ and --verify use, so all three agree.
+        module, variable = AgentWrapper.resolve_agent_target(
+            cfg.agent_spec, cfg.agent_module, cfg.agent_variable
+        )
+
+        # Same cheap credential preflight --verify runs, scoped to the BUNDLED DEFAULT agent —
+        # the only one whose model (and thus required key) we know. A custom/BYO agent is the
+        # operator's concern. Gives the missing-key case a clean actionable verdict on stderr
+        # instead of a raw provider TypeError mid-turn (gh #60/#90, matching /health via
+        # config.is_bundled_default so they can't drift).
+        if config.is_bundled_default(cfg):
+            missing = handlers._missing_provider_key(str(cfg.model_name or "").strip())
+            if missing:
+                print(
+                    f"[fail] cannot ask: {missing} is not set — the default agent's turn "
+                    "would fail. Set it, pass --demo for the keyless agent, or select your "
+                    "own with -a.",
+                    file=sys.stderr,
+                )
+                return 1
+
+        # Build the SAME agent object the sidebar runs, through AgentWrapper's own loader
+        # (strict module:variable spec, same implicit agent->graph fallback). A load failure is
+        # a clean [fail], never an uncaught traceback (gh #92, mirroring --verify).
+        try:
+            graph, loaded_spec = AgentWrapper.load_agent_from_target(module, variable)
+        except Exception as e:  # noqa: BLE001 - report a load failure cleanly
+            print(f"[fail] could not load agent: {e}", file=sys.stderr)
+            return 1
+
+        # Run one turn through the shipped core one-shot primitive. collect_chunk_frames builds
+        # the AG-UI agent (attaching a checkpointer) and drives iter_chunk_frames to a typed
+        # TurnResult — the same wire the sidebar streams, so the printed reply matches. Guard
+        # the whole call so a non-runnable graph (wrong type / uncompiled) is a clean [fail],
+        # not a crash (gh #92).
+        try:
+            result = asyncio.run(
+                asyncio.wait_for(
+                    collect_chunk_frames(graph, prompt, thread_id), timeout=turn_timeout
+                )
+            )
+        except asyncio.TimeoutError:
+            print(f"[fail] agent turn timed out after {turn_timeout:g}s", file=sys.stderr)
+            return 1
+        except Exception as e:  # noqa: BLE001 - any turn failure is a clean [fail]
+            print(f"[fail] agent turn failed: {e}", file=sys.stderr)
+            return 1
+
+    # The reply text to stdout (may be empty for a tool-only / interrupted turn); the
+    # verdict to stderr. Exit code from the outcome.
+    if result.text:
+        print(result.text)
+    if result.outcome == "error":
+        print(f"[fail] agent errored: {result.error}", file=sys.stderr)
+    elif result.outcome == "interrupted":
+        print(
+            "[note] agent paused on an interrupt (human-in-the-loop) — no final reply yet",
+            file=sys.stderr,
+        )
+    else:
+        print(f"[ ok ] one turn completed cleanly (agent {loaded_spec!r})", file=sys.stderr)
+    return _ask_exit_code(result.outcome)
+
+
+def _extract_ask(args):
+    """Pull ``--ask PROMPT`` / ``--ask=PROMPT`` out of args; return ``(prompt, remaining)``.
+
+    Mirrors ``_find_user_token``'s space-and-equals scan. ``--ask`` is a launcher flag, not
+    a ``jupyter lab`` one, so it's stripped from the passthrough. Returns ``prompt=None``
+    when absent (feature off); an explicitly empty ``--ask=`` / ``--ask ""`` is a real (if
+    odd) prompt and is returned as ``""`` so the caller can still run a turn with it.
+    """
+    prompt = None
+    remaining = []
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--ask" and i + 1 < len(args):
+            prompt = args[i + 1]
+            i += 2
+            continue
+        if arg.startswith("--ask="):
+            prompt = arg.split("=", 1)[1]
+            i += 1
+            continue
+        remaining.append(arg)
+        i += 1
+    return prompt, remaining
+
+
 def main():
     """Main launcher function."""
     # Parse command line arguments
@@ -527,6 +673,10 @@ def main():
     # short-circuited before this and always reported agent_spec=None even with
     # -a/--demo (gh #-dogfood).
     agent_spec, demo, args = extract_agent_args(args)
+    # Strip our one-shot --ask PROMPT too (it's a launcher flag, not a jupyter one), so it
+    # never leaks into the `jupyter lab` passthrough. Parsed here so --ask reflects the same
+    # -a/--demo agent this invocation would launch. (gh #101)
+    ask_prompt, args = _extract_ask(args)
     if demo and agent_spec:
         print("ERROR: --demo and -a/--agent are mutually exclusive")
         sys.exit(1)
@@ -665,6 +815,15 @@ def main():
     # (--verify never opens HTTP; --serve-check boots its own server with a fresh token).
     if "--check-connection" in args or "--check-server" in args:
         sys.exit(check_connection())
+
+    # --ask "<prompt>": the behavior twin of --verify. --verify proves the agent RUNS (its
+    # reply discarded); --ask runs the user's OWN prompt and PRINTS the reply, then exits
+    # (complete=0 / error=1 / interrupted=2). Resolves + loads the agent exactly like
+    # --verify (honoring -a / --demo / LANGSTAGE_AGENT_MODULE + _VARIABLE — set into the env
+    # above), then runs one turn via the shipped core one-shot primitive. Closes the inner
+    # dev loop from the terminal, no browser. (gh #101)
+    if ask_prompt is not None:
+        sys.exit(ask(ask_prompt))
 
     if agent_spec:
         print(f"Agent spec: {agent_spec}")

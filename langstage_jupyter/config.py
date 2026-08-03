@@ -89,7 +89,12 @@ class LabConfig(HostConfig):
     agent_module: str = "langstage_jupyter.agent"
     agent_variable: Optional[str] = None
     jupyter_token: str = "12345"
-    jupyter_server_url: str = "http://localhost:8889"
+    # Must match the launcher's own port scan (find_available_port(start_port=8888)),
+    # the README's manual-config walkthrough (jupyter lab --port 8888), and every
+    # --check-connection example. The old :8889 default disagreed with all three, so a
+    # user relying on the default (or copying .env.example) got --check-connection
+    # false-failing against a Jupyter that was actually up at :8888 (gh #99).
+    jupyter_server_url: str = "http://localhost:8888"
     model_name: str = "anthropic:claude-sonnet-4-6"
     model_temperature: float = 0.0
     virtual_mode: bool = True
