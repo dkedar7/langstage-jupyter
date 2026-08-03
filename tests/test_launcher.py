@@ -222,7 +222,11 @@ class TestShowConfigJson:
         assert spec["legacy_env"] == "DEEPAGENT_AGENT_SPEC"
         assert spec["toml"] == "agent.spec"
         # toml block carries found/path/malformed (no file here → absent, not malformed).
-        assert data["toml"] == {"found": False, "path": None, "malformed": False}
+        # Assert the known-key subset, not exact-dict equality: langstage-core may add
+        # forward-compatible keys to this block (e.g. `unknown_keys` in 1.0.32).
+        assert data["toml"]["found"] is False
+        assert data["toml"]["path"] is None
+        assert data["toml"]["malformed"] is False
         # The launcher-managed keys are omitted from JSON too (same list as the table).
         for key in ("host", "port", "title", "jupyter_token", "jupyter_server_url"):
             assert key not in data["config"], key
