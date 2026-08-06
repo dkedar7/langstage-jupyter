@@ -694,14 +694,24 @@ def main():
     # key for each) and exit — now reflecting any -a/--demo parsed above.
     if "--show-config" in args:
         from langstage_jupyter.config import LabConfig
+        cfg = LabConfig.resolve()
         # Hide keys the LAUNCHER doesn't honor, so --show-config never advertises
         # an env var with a confident source that has no effect here:
         #   host/port  — JupyterLab binds localhost on the auto-detected/--port port (gh #30)
         #   title      — inherited from the web-app HostConfig; read nowhere in this stage
-        #   jupyter_token / jupyter_server_url — auto-generated/-detected at startup;
-        #     the launcher overrides whatever was resolved (pin via JUPYTER_TOKEN). (gh #34)
-        omit = ["host", "port", "title", "jupyter_token", "jupyter_server_url"]
-        cfg = LabConfig.resolve()
+        omit = ["host", "port", "title"]
+        # jupyter_token / jupyter_server_url are auto-detected/minted by the LAUNCHER,
+        # so hiding them is right for the LAUNCHER flow (they'd advertise a confident
+        # source the launcher overrides — gh #34). But the documented MANUAL-config flow
+        # (LANGSTAGE_JUPYTER_SERVER_URL / _TOKEN, or jupyter.server_url / jupyter.token in
+        # langstage.toml) has the USER set these, LabConfig resolves them, and
+        # --check-connection honors them — so when their resolved source is NOT `default`,
+        # SHOW them (the token masked by config.py) so that flow is actually verifiable
+        # and --check-connection's "Check LANGSTAGE_JUPYTER_SERVER_URL" points somewhere
+        # --show-config can confirm. (gh #105)
+        for key in ("jupyter_token", "jupyter_server_url"):
+            if cfg.sources.get(key, "default") == "default":
+                omit.append(key)
         # --json: emit the SAME resolved config + provenance as a single machine-readable
         # object so a CI/tooling consumer can assert on which layer won for a key without
         # regexing the human table's [source] bracket (gh #88). Exit 0; everything else
