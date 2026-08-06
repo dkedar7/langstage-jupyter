@@ -163,21 +163,77 @@ class TestLauncherHelpAndShowConfig:
         # ...but keys this stage actually honors are still shown.
         assert "agent_spec" in out
 
-    def test_show_config_omits_launcher_managed_keys(self, monkeypatch, capsys):
-        # title is read nowhere in this stage; jupyter_token / jupyter_server_url
-        # are auto-generated/-detected and the launcher overrides them — so none
-        # of the three should be advertised with a live source. (gh #34)
+    def _isolate_config(self, monkeypatch, tmp_path):
+        """Clear LANGSTAGE_*/DEEPAGENT_* and point config resolution at an empty
+        tmp_path so neither the host's env nor a stray global/project langstage.toml
+        leaks in and shifts a key's source off `default`."""
+        for key in list(os.environ.keys()):
+            if key.startswith(("LANGSTAGE_", "DEEPAGENT_")):
+                monkeypatch.delenv(key, raising=False)
+        global_dir = tmp_path / "global"
+        global_dir.mkdir(exist_ok=True)
+        monkeypatch.setenv("DEEPAGENTS_CONFIG_HOME", str(global_dir))
+        monkeypatch.chdir(tmp_path)
+
+    def test_show_config_omits_default_managed_keys(self, monkeypatch, capsys, tmp_path):
+        # With NO user override, title is read nowhere in this stage and
+        # jupyter_token / jupyter_server_url come from the default (auto-minted/
+        # -detected, launcher-managed) — so all three stay hidden in the LAUNCHER
+        # flow, never advertising a live source the launcher overrides. (gh #34/#105)
+        self._isolate_config(monkeypatch, tmp_path)
         monkeypatch.setenv("LANGSTAGE_TITLE", "MyTitle")
-        monkeypatch.setenv("LANGSTAGE_JUPYTER_TOKEN", "pinned-tok")
-        monkeypatch.setenv("LANGSTAGE_JUPYTER_SERVER_URL", "http://localhost:9999")
         monkeypatch.setattr("sys.argv", ["langstage-jupyter", "--show-config"])
         main()
         out = capsys.readouterr().out
         for key in ("\n  title ", "\n  jupyter_token ", "\n  jupyter_server_url "):
             assert key not in out, key
-        for env in ("LANGSTAGE_TITLE", "LANGSTAGE_JUPYTER_TOKEN", "LANGSTAGE_JUPYTER_SERVER_URL"):
-            assert env not in out, env
+        assert "LANGSTAGE_TITLE" not in out
         assert "agent_spec" in out
+
+    def test_show_config_shows_user_set_jupyter_keys_masked(self, monkeypatch, capsys, tmp_path):
+        # gh #105: the documented MANUAL-config flow has the user set these two via
+        # env (or langstage.toml), LabConfig resolves them, and --check-connection
+        # honors them — so --show-config must SHOW them, or that flow is unverifiable
+        # and --check-connection points the user at a var --show-config won't display.
+        # The server URL is shown in full (not a secret); the token is shown MASKED.
+        self._isolate_config(monkeypatch, tmp_path)
+        monkeypatch.setenv("LANGSTAGE_JUPYTER_SERVER_URL", "http://localhost:9099")
+        monkeypatch.setenv("LANGSTAGE_JUPYTER_TOKEN", "manual-token-abc")
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", "--show-config"])
+        main()
+        out = capsys.readouterr().out
+        # Both keys now appear as rows the user set...
+        assert "\n  jupyter_server_url " in out
+        assert "\n  jupyter_token " in out
+        # ...the server URL in full so the user can confirm exactly what's probed...
+        assert "http://localhost:9099" in out
+        # ...their env var names are advertised now they're honored and shown...
+        assert "LANGSTAGE_JUPYTER_SERVER_URL" in out
+        assert "LANGSTAGE_JUPYTER_TOKEN" in out
+        # ...but the raw token secret is NEVER printed — only a masked fingerprint.
+        assert "manual-token-abc" not in out
+        # title has no effect in this stage, so it stays omitted regardless.
+        assert "\n  title " not in out
+
+    def test_show_config_json_shows_user_set_jupyter_keys_masked(self, monkeypatch, capsys, tmp_path):
+        # gh #105: the --json twin must agree with the human table — both keys present,
+        # the real source credited, and the token value masked (never the secret).
+        import json
+
+        self._isolate_config(monkeypatch, tmp_path)
+        monkeypatch.setenv("LANGSTAGE_JUPYTER_SERVER_URL", "http://localhost:9099")
+        monkeypatch.setenv("LANGSTAGE_JUPYTER_TOKEN", "manual-token-abc")
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", "--show-config", "--json"])
+        main()
+        data = json.loads(capsys.readouterr().out)
+        cfg = data["config"]
+        assert "jupyter_server_url" in cfg and "jupyter_token" in cfg
+        assert cfg["jupyter_server_url"]["value"] == "http://localhost:9099"
+        assert cfg["jupyter_server_url"]["source"] == "env:LANGSTAGE_JUPYTER_SERVER_URL"
+        assert cfg["jupyter_token"]["source"] == "env:LANGSTAGE_JUPYTER_TOKEN"
+        # The token value is masked, not the raw secret.
+        assert cfg["jupyter_token"]["value"] != "manual-token-abc"
+        assert "manual-token-abc" not in json.dumps(data)
 
 
 class TestShowConfigJson:

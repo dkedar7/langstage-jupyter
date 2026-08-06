@@ -137,8 +137,14 @@ class ChatHandler(APIHandler):
             selected_text = data.get("selected_text", "")
             selection_metadata = data.get("selection_metadata", "")
 
-            if not message:
-                raise HTTPError(400, "Message is required")
+            # `not message` alone lets a truthy non-string (int / object / array)
+            # through to UserMessage construction, where Pydantic raises deep in the
+            # agent — that error was then emitted as an in-band SSE `error` event with
+            # HTTP 200, leaking a raw validation string at a success status. Require a
+            # non-empty *string* so bad `message` input is uniformly a clean pre-stream
+            # 400, matching the null/"" cases and the #53 body-shape guard. (gh #106)
+            if not isinstance(message, str) or not message:
+                raise HTTPError(400, "Message is required and must be a non-empty string")
 
             # Get root directory from server settings
             root_dir = self.settings.get("server_root_dir", "")

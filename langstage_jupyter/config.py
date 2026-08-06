@@ -8,7 +8,7 @@ env+defaults view (no TOML) kept for back-compat with existing call sites
 (``agent.py``, ``agent_wrapper.py``).
 """
 import os
-import sys
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, ClassVar, Optional
@@ -42,6 +42,21 @@ def get_config(key: str, default: Any = None, type_cast: Optional[Callable] = No
 
 def _to_bool(value: str) -> bool:
     return str(value).strip().lower() in ("true", "1", "yes", "on")
+
+
+def _mask_secret(value: Any) -> str:
+    """Redact a secret for display in ``--show-config``.
+
+    Reveals enough to confirm the value is SET — and, for a token long enough that a
+    last-4 fingerprint is meaningful, *which* one — without printing the secret itself.
+    Short values (< 8 chars, e.g. the ``12345`` default) are fully starred so nothing
+    material leaks. Mirrors the launcher startup banner, which already masks the token
+    rather than printing it. (gh #105)
+    """
+    s = "" if value is None else str(value)
+    if len(s) < 8:
+        return "*" * len(s)
+    return "****" + s[-4:]
 
 
 # The base ``HostConfig.describe()`` footer for the no-file case. We match on this
@@ -147,6 +162,36 @@ class LabConfig(HostConfig):
         )
         return obj
 
+    # Fields whose resolved value is a secret and must never be printed verbatim by
+    # the config diagnostics. ``--show-config`` may SHOW jupyter_token (so the manual-
+    # config flow is verifiable, gh #105), but only masked — see ``_mask_secret``.
+    _SECRET_FIELDS: ClassVar[tuple] = ("jupyter_token",)
+
+    @contextmanager
+    def _secrets_masked_for_render(self, omit_keys: Optional[list]):
+        """Temporarily replace secret fields with a masked fingerprint while the base
+        ``describe`` / ``config_dict`` renders them, then restore the live values.
+
+        The base renderers read ``getattr(self, field)`` for the value column; swapping
+        the attribute for the duration of the call is the least invasive way to mask a
+        secret in BOTH the human table and the ``--json`` twin without duplicating their
+        formatting. A field that's omitted for this render is left untouched (it isn't
+        printed anyway). Source attribution lives in a separate ``_sources`` map, so the
+        ``[env:…]`` / ``[toml …]`` label a user needs to confirm precedence is unaffected.
+        """
+        omit = set(omit_keys or ())
+        saved: dict[str, Any] = {}
+        try:
+            for name in self._SECRET_FIELDS:
+                if name in omit:
+                    continue
+                saved[name] = getattr(self, name)
+                setattr(self, name, _mask_secret(saved[name]))
+            yield
+        finally:
+            for name, value in saved.items():
+                setattr(self, name, value)
+
     def describe(
         self,
         omit_keys: Optional[list] = None,
@@ -163,7 +208,8 @@ class LabConfig(HostConfig):
         file still shows its ``TOML read from:`` footer and genuine absence still shows
         ``no ... found`` — both untouched.
         """
-        text = super().describe(omit_keys=omit_keys, configurable=configurable)
+        with self._secrets_masked_for_render(omit_keys):
+            text = super().describe(omit_keys=omit_keys, configurable=configurable)
         malformed = getattr(self, "_malformed_toml_paths", [])
         if not malformed:
             return text
@@ -201,7 +247,8 @@ class LabConfig(HostConfig):
         malformed project keeps crediting the file that DID load (``found``/``path``
         untouched) while still surfacing ``malformed: true`` as data.
         """
-        data = super().config_dict(omit_keys=omit_keys)
+        with self._secrets_masked_for_render(omit_keys):
+            data = super().config_dict(omit_keys=omit_keys)
         malformed = getattr(self, "_malformed_toml_paths", [])
         toml_block = data.get("toml", {})
         toml_block["malformed"] = bool(malformed)

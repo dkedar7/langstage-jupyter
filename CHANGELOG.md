@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.6.28 - 2026-08-06
+
+### Fixed
+- **`--show-config` now shows `jupyter_server_url` and `jupyter_token` when the user set
+  them (the documented manual-config flow), instead of hiding them unconditionally (gh
+  #105).** Both keys were dropped by a fixed `omit` list in `launcher.py`. That's correct
+  for the *launcher* flow, where the port is auto-detected and the token auto-minted — but
+  they are exactly the two values the **"Alternative: Manual Configuration"** walkthrough
+  has the user set (`LANGSTAGE_JUPYTER_SERVER_URL` / `LANGSTAGE_JUPYTER_TOKEN`, or
+  `jupyter.server_url` / `jupyter.token` in `langstage.toml`), and `--check-connection`
+  resolves and honors them. So in the one flow where they matter, `--show-config` couldn't
+  confirm what would be probed, and `--check-connection`'s failure text pointed the user at
+  a variable `--show-config` refused to display. The launcher now omits them **only when
+  their resolved source is `default`**; when the user set them via env or `langstage.toml`,
+  both appear — the server URL in full, the token **masked** (`****<last4>`, never the raw
+  secret) with its source, so the manual-config → `--show-config` → `--check-connection`
+  loop closes. The human table and `--show-config --json` stay in lockstep, and masking is
+  centralized in `LabConfig` so both renderers redact the secret identically.
+- **`POST /langstage-jupyter/chat` with a non-string `message` (int / object / array) now
+  returns a clean `400` before streaming, instead of `200` with a raw Pydantic error leaked
+  in-band (gh #106).** The `if not message:` guard rejected `null`/`""`/`0` but let a truthy
+  non-string through to `UserMessage` construction, where Pydantic raised deep inside the
+  agent; that error was caught and emitted as an in-band SSE `error` event at HTTP `200`,
+  leaking an internal `pydantic`/`langchain` validation string at a success status. The same
+  category of bad `message` input was thus handled two different ways. The guard is now
+  `not isinstance(message, str) or not message`, so a wrong-typed `message` is a uniform
+  pre-stream `400 "Message is required and must be a non-empty string"` — matching the
+  `null`/`""` cases and the #53 body-shape guard. The browser sidebar always sends a string,
+  so this only affected direct API integrators (the routes are documented for direct use).
+
 ## 0.6.27 - 2026-08-03
 
 ### Fixed
