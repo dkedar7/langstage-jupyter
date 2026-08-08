@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.6.29 - 2026-08-08
+
+### Fixed
+- **The launcher no longer prints the auth token in cleartext after the banner says it is
+  "hidden for security" (gh #109).** The startup banner masked the token
+  (`Token: ******************** (hidden for security)`), but the `Launching:` line four
+  lines later printed the full `--IdentityProvider.token=<token>` it hands to the
+  subprocess verbatim — so the secret still leaked to stdout, and thus to
+  `nohup`/redirected logs, CI job output, systemd journals, terminal scrollback, and
+  screen-shares, in exactly the places a `ps` snapshot never reaches. The masking was
+  inconsistent: hidden on one line, cleartext on the next. The `Launching:` line now masks
+  every jupyter-lab token argument (`--IdentityProvider.token` / `--ServerApp.token`, in
+  both the equals and space forms, covering the launcher's own generated token AND a
+  user-pinned one) with the same `****<last4>` fingerprint the banner and `--show-config`
+  use (gh #105). The real token still rides through to the `subprocess` unchanged, so `ps`
+  visibility is identical — the launcher just stops writing the secret to its own logged
+  stdout after promising it is hidden.
+- **`--serve-check` now honors the documented `LANGSTAGE_AGENT_SPEC` (and the split
+  `LANGSTAGE_AGENT_MODULE` + `LANGSTAGE_AGENT_VARIABLE`), so the HTTP preflight smoke-tests
+  the agent that will actually serve (gh #110).** `--serve-check` resolved the agent from
+  the CLI `-a` flag alone; when the agent was selected via the primary documented
+  mechanism — `LANGSTAGE_AGENT_SPEC` in the environment — it silently ignored it, booted
+  the bundled keyless demo agent, streamed a turn through *that*, and reported a green
+  `[ ok ]` / exit 0. A user who wired `--serve-check` into CI after configuring their real
+  agent per the docs got a false GREEN that validated the wrong agent — the exact
+  "preflight exercises a different path than the runtime" footgun the check exists to
+  prevent. This is the `--serve-check` twin of #90 (which fixed `--verify`). `--serve-check`
+  now resolves the agent through the SAME shared resolver `--verify` and the sidebar runtime
+  (`AgentWrapper.resolve_agent_target`) use — `-a` → `LANGSTAGE_AGENT_SPEC` →
+  `AGENT_MODULE`/`_VARIABLE` → keyless-demo fallback — so it boots the configured agent.
+  The demo fallback stays only when nothing is configured at all (CI-safe by default).
+
 ## 0.6.28 - 2026-08-06
 
 ### Fixed

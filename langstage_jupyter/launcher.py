@@ -217,6 +217,42 @@ def _find_user_token(args):
     return None
 
 
+def _redact_token_args(args):
+    """Return a display-only copy of ``args`` with any jupyter-lab token VALUE masked.
+
+    The startup banner promises the token is ``(hidden for security)``, but the
+    ``Launching: ...`` line printed the full ``--IdentityProvider.token=<value>`` it
+    hands to the subprocess in cleartext — so the secret still leaked to stdout, and
+    thus to redirected/``nohup`` logs, CI job output, systemd journals, terminal
+    scrollback, and screen-shares, right after the banner claimed it was hidden
+    (gh #109). This masks the token in the PRINTED command only; the real value still
+    rides through to ``subprocess`` unchanged, so ``ps`` visibility is unchanged — the
+    launcher just stops writing the secret to its own logged stdout. Masks the same
+    ``****<last4>`` fingerprint ``--show-config`` uses (gh #105), covering both accepted
+    token args (``--IdentityProvider.token`` / ``--ServerApp.token``) in both the
+    equals form (``--opt=value``) and the space form (``--opt value``).
+    """
+    from langstage_jupyter.config import _mask_secret
+
+    redacted = list(args)
+    i = 0
+    while i < len(redacted):
+        arg = redacted[i]
+        matched = False
+        for name in TOKEN_ARG_NAMES:
+            if arg == name and i + 1 < len(redacted):
+                redacted[i + 1] = _mask_secret(redacted[i + 1])
+                i += 2
+                matched = True
+                break
+            if arg.startswith(name + "="):
+                redacted[i] = f"{name}={_mask_secret(arg.split('=', 1)[1])}"
+                break
+        if not matched:
+            i += 1
+    return redacted
+
+
 # ── --serve-check: headless HTTP smoke test of the deployed extension ──
 #
 # The served route prefix the extension registers (handlers.setup_handlers).
@@ -815,9 +851,28 @@ def main():
     # --serve-check: the HTTP counterpart of --verify. Boot the server extension
     # headlessly and prove the DEPLOYED endpoint serves a turn — catching route/
     # registration/handler regressions --verify structurally can't (ADR 0004).
-    # Defaults to the keyless demo agent (CI-safe); honors -a for a real agent.
     if "--serve-check" in args or "--smoke" in args:
-        sys.exit(serve_check(agent_spec))
+        from langstage_jupyter import config
+        from langstage_jupyter.agent_wrapper import AgentWrapper
+        from langstage_jupyter.config import LabConfig
+
+        # Resolve the agent the SAME way --verify and the sidebar runtime (AgentWrapper)
+        # do — honoring the documented LANGSTAGE_AGENT_SPEC (and AGENT_MODULE/_VARIABLE),
+        # not just the CLI -a — so the HTTP smoke test boots the agent that will actually
+        # serve. Previously --serve-check passed the CLI agent_spec ALONE and silently
+        # smoke-tested the bundled keyless demo whenever the agent was selected via the
+        # documented env config, reporting a green [ ok ] for the WRONG agent — a
+        # false-GREEN preflight (gh #110, the --serve-check twin of #90's --verify fix).
+        # Fall back to the keyless demo (CI-safe) ONLY when nothing is configured at all.
+        cfg = LabConfig.resolve()
+        if config.is_bundled_default(cfg):
+            resolved_spec = None
+        else:
+            module, variable = AgentWrapper.resolve_agent_target(
+                cfg.agent_spec, cfg.agent_module, cfg.agent_variable
+            )
+            resolved_spec = f"{module}:{variable}" if variable else module
+        sys.exit(serve_check(resolved_spec))
 
     # --check-connection: the MANUAL-config connection preflight (gh #67). Confirm the
     # configured LANGSTAGE_JUPYTER_SERVER_URL + LANGSTAGE_JUPYTER_TOKEN actually reach a
@@ -960,8 +1015,10 @@ def main():
     ):
         jupyter_args.append('--allow-root')
 
-    # Launch Jupyter Lab
-    print(f"Launching: {' '.join(jupyter_args)}\n")
+    # Launch Jupyter Lab. Mask the token in the PRINTED command so we don't
+    # contradict the banner's "(hidden for security)" by leaking it in cleartext on
+    # the very next line (gh #109) — the subprocess below still gets the real args.
+    print(f"Launching: {' '.join(_redact_token_args(jupyter_args))}\n")
     try:
         # Propagate JupyterLab's exit code — otherwise a startup failure (port in use,
         # a fatal config error, the root guard) exits the launcher 0, so `set -e`, CI

@@ -579,6 +579,44 @@ class TestTokenHandling:
         assert calls["env"]["LANGSTAGE_JUPYTER_TOKEN"] == "MyPinnedToken"
         assert calls["env"]["DEEPAGENT_JUPYTER_TOKEN"] == "MyPinnedToken"
 
+    def test_launching_line_masks_the_generated_token(self, monkeypatch, capsys):
+        # gh #109: the banner masks the token "(hidden for security)", then the
+        # `Launching:` line printed the full --IdentityProvider.token=<value> in
+        # cleartext four lines later — the secret still leaked to stdout (and thus
+        # nohup/redirected logs, CI output, journals, scrollback, screen-shares).
+        # The masking must be CONSISTENT: no cleartext token anywhere in the output.
+        monkeypatch.setattr(
+            "langstage_jupyter.launcher.generate_token",
+            lambda: "abcdefghijklmnopqrstuvwxyz012345",
+        )
+        calls = self._run_main(["--no-browser"], monkeypatch)
+        out = capsys.readouterr().out
+        # The subprocess STILL receives the real token (ps visibility unchanged)...
+        assert (
+            "--IdentityProvider.token=abcdefghijklmnopqrstuvwxyz012345" in calls["cmd"]
+        )
+        # ...but the raw secret is NEVER printed anywhere in the launch output.
+        assert "abcdefghijklmnopqrstuvwxyz012345" not in out
+        # ...and the Launching line masks it with the ****<last4> fingerprint the
+        # banner / --show-config use, rather than dropping the flag entirely.
+        launching = [ln for ln in out.splitlines() if ln.startswith("Launching:")]
+        assert launching, "expected a Launching: line in the output"
+        assert "--IdentityProvider.token=****2345" in launching[0]
+
+    def test_launching_line_masks_a_user_pinned_token(self, monkeypatch, capsys):
+        # A user-pinned token rides through in the child args; it too must be masked
+        # in the printed command, not echoed verbatim (gh #109).
+        calls = self._run_main(
+            ["--no-browser", "--IdentityProvider.token=MyPinnedToken"], monkeypatch
+        )
+        out = capsys.readouterr().out
+        # The child still gets the user's real token...
+        assert "--IdentityProvider.token=MyPinnedToken" in calls["cmd"]
+        # ...but stdout never leaks it in cleartext.
+        assert "MyPinnedToken" not in out
+        launching = [ln for ln in out.splitlines() if ln.startswith("Launching:")]
+        assert launching and "--IdentityProvider.token=****oken" in launching[0]
+
 
 #: A token shaped exactly like one `secrets.token_urlsafe(32)` really produces
 #: ~1.6% of the time: base64url alphabet, leading `-`. (gh #79)
@@ -1009,6 +1047,68 @@ class TestServeCheckRouting:
         with pytest.raises(SystemExit):
             main()
         assert called["spec"] == "my.py:graph"
+
+    def _clear_agent_env(self, monkeypatch):
+        for k in (
+            "LANGSTAGE_AGENT_SPEC", "DEEPAGENT_AGENT_SPEC",
+            "LANGSTAGE_AGENT_MODULE", "DEEPAGENT_AGENT_MODULE",
+            "LANGSTAGE_AGENT_VARIABLE", "DEEPAGENT_AGENT_VARIABLE",
+        ):
+            monkeypatch.delenv(k, raising=False)
+
+    def test_serve_check_honors_agent_spec_env_not_the_default(self, monkeypatch):
+        # gh #110: --serve-check must smoke-test the CONFIGURED agent — the one the
+        # running server would load — honoring the DOCUMENTED LANGSTAGE_AGENT_SPEC even
+        # when no -a is passed, exactly like --verify (gh #90). Before the fix it passed
+        # the CLI agent_spec (None here) straight through, so serve_check silently booted
+        # the bundled keyless demo and reported a green [ ok ] for the WRONG agent.
+        called = {}
+
+        def fake_serve_check(spec=None, **kw):
+            called["spec"] = spec
+            return 0
+
+        monkeypatch.setattr("langstage_jupyter.launcher.serve_check", fake_serve_check)
+        self._clear_agent_env(monkeypatch)
+        monkeypatch.setenv("LANGSTAGE_AGENT_SPEC", "keyless/mycustom.py:myagent")
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", "--serve-check"])
+        with pytest.raises(SystemExit):
+            main()
+        assert called["spec"] == "keyless/mycustom.py:myagent"  # NOT None / the demo
+
+    def test_serve_check_honors_module_and_variable_env(self, monkeypatch):
+        # The same must hold for the separate AGENT_MODULE + _VARIABLE selection (gh
+        # #90's other path): it resolves to a module:variable spec, not the demo.
+        called = {}
+
+        def fake_serve_check(spec=None, **kw):
+            called["spec"] = spec
+            return 0
+
+        monkeypatch.setattr("langstage_jupyter.launcher.serve_check", fake_serve_check)
+        self._clear_agent_env(monkeypatch)
+        monkeypatch.setenv("LANGSTAGE_AGENT_MODULE", "mycustom_mod")
+        monkeypatch.setenv("LANGSTAGE_AGENT_VARIABLE", "myagent")
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", "--serve-check"])
+        with pytest.raises(SystemExit):
+            main()
+        assert called["spec"] == "mycustom_mod:myagent"
+
+    def test_serve_check_defaults_to_demo_when_nothing_configured(self, monkeypatch):
+        # With NO agent configured at all, the CI-safe keyless demo fallback stays:
+        # serve_check receives None (→ DEMO_AGENT_SPEC internally). Unchanged behavior.
+        called = {}
+
+        def fake_serve_check(spec=None, **kw):
+            called["spec"] = spec
+            return 0
+
+        monkeypatch.setattr("langstage_jupyter.launcher.serve_check", fake_serve_check)
+        self._clear_agent_env(monkeypatch)
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", "--serve-check"])
+        with pytest.raises(SystemExit):
+            main()
+        assert called["spec"] is None
 
     def test_help_lists_serve_check(self, monkeypatch, capsys):
         monkeypatch.setattr("sys.argv", ["langstage-jupyter", "--help"])
