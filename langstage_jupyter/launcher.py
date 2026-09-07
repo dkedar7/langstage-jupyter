@@ -27,6 +27,33 @@ import subprocess
 DEMO_AGENT_SPEC = "langstage_core.demo.stub:graph"
 
 
+def _print(text: str = "", *, file=None) -> None:
+    """``print``, but a character the console cannot encode is escaped, not fatal.
+
+    Every verdict this launcher prints interpolates text it did not author: a
+    custom agent's exception message or name, a resolved config value, a model's
+    reply. ``print`` encodes with the console's codec, and on a default Windows
+    console that codec is cp1252, which cannot represent an accented character,
+    CJK, or an emoji. A bare ``print`` then raises ``UnicodeEncodeError``, so the
+    command dies with a raw traceback instead of printing the clean verdict it
+    exists for — and on ``--serve-check`` it dies *after* the check passed
+    (gh #122, #126, #130, #140).
+
+    The unencodable characters are escaped rather than dropped, which is what
+    ``--show-config --json`` already does through ``json.dumps``'s default
+    ``ensure_ascii``: the sibling path that never had the bug.
+
+    Only the encoding step is guarded. A stream that is closed or broken still
+    raises, because that is not this function's business to swallow.
+    """
+    stream = sys.stdout if file is None else file
+    try:
+        print(text, file=stream)
+    except UnicodeEncodeError:
+        encoding = getattr(stream, "encoding", None) or "utf-8"
+        print(text.encode(encoding, "backslashreplace").decode(encoding), file=stream)
+
+
 def _package_version() -> str:
     """This package's version, the same string ``--version`` prints."""
     from importlib.metadata import PackageNotFoundError, version
@@ -381,7 +408,7 @@ def serve_check(agent_spec=None, *, boot_timeout=45.0, turn_timeout=60.0):
         while time.monotonic() < deadline:
             if proc.poll() is not None:  # server died before serving
                 tail = _server_output_tail()
-                print(f"[fail] serve-check: jupyter server exited before it was ready "
+                _print(f"[fail] serve-check: jupyter server exited before it was ready "
                       f"(code {proc.returncode}){' — last output:' + tail if tail else ''}")
                 return 1
             try:
@@ -404,15 +431,15 @@ def serve_check(agent_spec=None, *, boot_timeout=45.0, turn_timeout=60.0):
             )
             chunks, complete, error, saw_interrupt = _summarize_sse(iter(resp))
         except urllib.error.HTTPError as e:
-            print(f"[fail] serve-check: POST /{SERVE_CHECK_ROUTE}/chat returned HTTP {e.code} "
+            _print(f"[fail] serve-check: POST /{SERVE_CHECK_ROUTE}/chat returned HTTP {e.code} "
                   f"({e.reason})")
             return 1
         except (urllib.error.URLError, OSError) as e:
-            print(f"[fail] serve-check: POST /{SERVE_CHECK_ROUTE}/chat failed: {e}")
+            _print(f"[fail] serve-check: POST /{SERVE_CHECK_ROUTE}/chat failed: {e}")
             return 1
 
         if error is not None:
-            print(f"[fail] serve-check: the served turn errored: {error}")
+            _print(f"[fail] serve-check: the served turn errored: {error}")
             return 1
 
         name = health.get("agent_name") or spec
@@ -422,7 +449,7 @@ def serve_check(agent_spec=None, *, boot_timeout=45.0, turn_timeout=60.0):
         # it must be a distinct [ ok ] verdict, not the "incomplete turn (streamed 0
         # chunk(s), complete=True)" false [fail] the chunks<1 gate used to give (gh #95).
         if saw_interrupt and complete:
-            print(f"[ ok ] served turn paused on interrupt (HITL agent) — endpoint healthy: "
+            _print(f"[ ok ] served turn paused on interrupt (HITL agent) — endpoint healthy: "
                   f"agent={name!r} (routes under /{SERVE_CHECK_ROUTE}/)")
             return 0
         if chunks < 1 or not complete:
@@ -430,7 +457,7 @@ def serve_check(agent_spec=None, *, boot_timeout=45.0, turn_timeout=60.0):
                   f"(streamed {chunks} chunk(s), complete={complete})")
             return 1
 
-        print(f"[ ok ] served turn verified: agent={name!r}, streamed {chunks} chunks, "
+        _print(f"[ ok ] served turn verified: agent={name!r}, streamed {chunks} chunks, "
               f"completed cleanly (routes under /{SERVE_CHECK_ROUTE}/)")
         return 0
     finally:
@@ -623,7 +650,7 @@ def ask(prompt, *, thread_id="ask", turn_timeout=120.0):
         try:
             graph, loaded_spec = AgentWrapper.load_agent_from_target(module, variable)
         except Exception as e:  # noqa: BLE001 - report a load failure cleanly
-            print(f"[fail] could not load agent: {e}", file=sys.stderr)
+            _print(f"[fail] could not load agent: {e}", file=sys.stderr)
             return 1
 
         # Run one turn through the shipped core one-shot primitive. collect_chunk_frames builds
@@ -641,22 +668,22 @@ def ask(prompt, *, thread_id="ask", turn_timeout=120.0):
             print(f"[fail] agent turn timed out after {turn_timeout:g}s", file=sys.stderr)
             return 1
         except Exception as e:  # noqa: BLE001 - any turn failure is a clean [fail]
-            print(f"[fail] agent turn failed: {e}", file=sys.stderr)
+            _print(f"[fail] agent turn failed: {e}", file=sys.stderr)
             return 1
 
     # The reply text to stdout (may be empty for a tool-only / interrupted turn); the
     # verdict to stderr. Exit code from the outcome.
     if result.text:
-        print(result.text)
+        _print(result.text)
     if result.outcome == "error":
-        print(f"[fail] agent errored: {result.error}", file=sys.stderr)
+        _print(f"[fail] agent errored: {result.error}", file=sys.stderr)
     elif result.outcome == "interrupted":
         print(
             "[note] agent paused on an interrupt (human-in-the-loop) — no final reply yet",
             file=sys.stderr,
         )
     else:
-        print(f"[ ok ] one turn completed cleanly (agent {loaded_spec!r})", file=sys.stderr)
+        _print(f"[ ok ] one turn completed cleanly (agent {loaded_spec!r})", file=sys.stderr)
     return _ask_exit_code(result.outcome)
 
 
@@ -769,7 +796,7 @@ def main():
             # workspace_root) as the same string the human table shows.
             print(json.dumps(payload, indent=2, default=str))
             return
-        print(cfg.describe(omit_keys=omit))
+        _print(cfg.describe(omit_keys=omit))
         return
 
     # --verify: preflight the agent the extension WOULD run — resolve the spec the
@@ -825,7 +852,7 @@ def main():
         try:
             graph, _loaded_spec = AgentWrapper.load_agent_from_target(module, variable)
         except Exception as e:  # noqa: BLE001 - report a load failure cleanly
-            print(f"[fail] could not load agent: {e}")
+            _print(f"[fail] could not load agent: {e}")
             sys.exit(1)
 
         # gh #92: the load succeeds for a non-runnable export — a wrong-TYPE object (a dict,
@@ -840,12 +867,12 @@ def main():
         try:
             result = _core_verify(graph)
         except Exception as e:  # noqa: BLE001 - report a verify failure cleanly
-            print(f"[fail] could not verify agent: {e}")
+            _print(f"[fail] could not verify agent: {e}")
             sys.exit(1)
         if result.ok:
-            print(f"[ ok ] agent verified: {result.reason}")
+            _print(f"[ ok ] agent verified: {result.reason}")
             sys.exit(0)
-        print(f"[fail] agent verification failed: {result.reason}")
+        _print(f"[fail] agent verification failed: {result.reason}")
         sys.exit(1)
 
     # --serve-check: the HTTP counterpart of --verify. Boot the server extension
@@ -891,7 +918,7 @@ def main():
         sys.exit(ask(ask_prompt))
 
     if agent_spec:
-        print(f"Agent spec: {agent_spec}")
+        _print(f"Agent spec: {agent_spec}")
 
     # Headline command runs `jupyter lab` — bail with a clear hint up front if
     # JupyterLab isn't installed, instead of letting the jupyter dispatcher dump
@@ -1018,7 +1045,7 @@ def main():
     # Launch Jupyter Lab. Mask the token in the PRINTED command so we don't
     # contradict the banner's "(hidden for security)" by leaking it in cleartext on
     # the very next line (gh #109) — the subprocess below still gets the real args.
-    print(f"Launching: {' '.join(_redact_token_args(jupyter_args))}\n")
+    _print(f"Launching: {' '.join(_redact_token_args(jupyter_args))}\n")
     try:
         # Propagate JupyterLab's exit code — otherwise a startup failure (port in use,
         # a fatal config error, the root guard) exits the launcher 0, so `set -e`, CI
