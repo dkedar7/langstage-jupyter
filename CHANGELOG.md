@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.6.30 - 2026-09-23
+
+### Security
+- **Notebook tools refuse a path that leaves the JupyterLab serving root (gh #117).**
+  `create_notebook("../x.ipynb")` (and every other notebook tool) accepted `..` segments:
+  `requests` collapsed `/api/contents/../x.ipynb` into a URL the server 404s, and the disk
+  fallback then honored the `..` against the agent process's cwd, so the file landed
+  outside the root and the tool reported success. Every tool now rejects a path with a
+  `..` segment (`/` or `\`), a drive letter, or a UNC prefix with an `Error: ... points
+  outside the JupyterLab serving root` string, before the server or the disk is touched.
+  A leading `/` still means root-relative, as in the contents API.
+- **An auth failure (401/403) or server error no longer silently redirects notebook reads
+  and writes to local disk (gh #125).** The notebook I/O primitives fell back to the local
+  filesystem on any status other than 200/404, so a wrong or stale
+  `LANGSTAGE_JUPYTER_TOKEN` made an existing server notebook read as "not found" and sent
+  writes to the agent's cwd, both reported as success. The disk fallback now applies only
+  when the server is unreachable (a connection error), as documented. Any other HTTP
+  failure, or a non-connection request error such as a read timeout, is returned as an
+  `Error:` naming the status; a 401/403 also points at `LANGSTAGE_JUPYTER_TOKEN` and
+  `--check-connection`.
+- **An unrecognized `LANGSTAGE_VIRTUAL_MODE` no longer turns the sandbox off (gh #134).**
+  The field used a local lenient caster that read any value outside `true/1/yes/on` as
+  `False`, so `LANGSTAGE_VIRTUAL_MODE=enabled` disabled the `FilesystemBackend` sandbox
+  with no note while `--show-config` credited `[env]`. It now uses langstage-core's strict
+  boolean caster (the one core's `debug` uses): an unrecognized value is ignored with a
+  `note:` and resolution keeps the layer beneath env (a `langstage.toml` value, else the
+  `True` default).
+
+### Fixed
+- **A timed-out `execute_cell` interrupts the kernel and keeps the cell's outputs
+  (gh #116).** On `EXECUTE_TIMEOUT` the tool stopped reading and left the cell running, so
+  the kernel stayed busy and every later `execute_cell` queued behind it and "timed out"
+  too (an infinite loop wedged it for good). It also overwrote the cell's outputs with
+  `[]` and its count with `None` when the cell had not even started. Now, when this cell
+  is the one running, the tool interrupts the kernel through `POST
+  /api/kernels/{id}/interrupt`, waits briefly for idle, and saves the partial output plus
+  the `KeyboardInterrupt`. When the cell never started (the kernel is busy with another
+  execution, such as a long cell the user ran), the kernel is not interrupted and the
+  cell's existing outputs are left untouched; the tool returns an `Error:` saying so.
+- **`execute_cell` no longer hangs on a cell that reads stdin (gh #128).** Cells ran with
+  jupyter-client's default `allow_stdin=True`, but nothing serviced the stdin channel, so
+  `input()` / `getpass` parked the kernel for the whole `EXECUTE_TIMEOUT` (300s by
+  default) and then wedged it. Cells now run with `allow_stdin=False`, so such a cell
+  fails immediately with `StdinNotImplementedError`, as `nbconvert --execute` does.
+- **Console-encoding crashes on Windows (gh #122, #126, #130, #140), contributed by
+  @shaurya703 in #141.** `--verify`, `--ask`, `--serve-check` and the `--show-config`
+  table printed agent- and config-supplied text with a bare `print`, which raised
+  `UnicodeEncodeError` on a cp1252 console for accented, CJK or emoji characters. Those
+  lines now escape the characters the console can't encode instead of crashing.
+
 ## 0.6.29 - 2026-08-08
 
 ### Fixed

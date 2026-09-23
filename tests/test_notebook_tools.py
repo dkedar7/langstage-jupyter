@@ -11,7 +11,9 @@ Findings covered (all reproduced by dogfooding 0.6.13 against a real Jupyter):
   * modify_cell deleted the cell on an empty string
   * execute_cell never waited for the kernel to be ready (dropped its output)
 """
+import os
 import queue
+import time
 
 import nbformat
 import pytest
@@ -26,7 +28,7 @@ def offline(monkeypatch):
     to the filesystem TOGETHER — they can never disagree about which file they mean."""
 
     def boom(*a, **k):
-        raise requests.RequestException("no server")
+        raise requests.ConnectionError("no server")
 
     monkeypatch.setattr(nt.requests, "get", boom)
     monkeypatch.setattr(nt.requests, "put", boom)
@@ -428,3 +430,287 @@ def test_create_notebook_creates_parent_dir_via_server(monkeypatch, ws):
     types_by_path = {url.rsplit("/api/contents/", 1)[-1]: typ for url, typ in puts}
     assert types_by_path.get("analysis") == "directory"
     assert types_by_path.get("analysis/report.ipynb") == "notebook"
+
+
+# ── gh #117: a path outside the serving root is rejected, never written ──────
+# `create_notebook("../x.ipynb")` used to report success while writing OUTSIDE the
+# serving root: requests collapsed `/api/contents/../x.ipynb` to a 404, which the
+# disk fallback then honored with `nbformat.write("../x.ipynb")` relative to cwd.
+
+
+@pytest.fixture
+def no_http(monkeypatch):
+    """Record any server call a tool makes for a path it should have refused."""
+    calls = []
+
+    def record(*a, **k):
+        calls.append(a)
+        raise requests.ConnectionError("no server")
+
+    for verb in ("get", "put", "post"):
+        monkeypatch.setattr(nt.requests, verb, record)
+    return calls
+
+
+_ESCAPING_PATHS = [
+    "../escape.ipynb",
+    "sub/../../escape.ipynb",
+    "a/b/../../../escape.ipynb",
+    "..\\escape.ipynb",
+    "C:/escape.ipynb",
+    "C:\\escape.ipynb",
+    "\\\\host\\share\\escape.ipynb",
+]
+
+_ALL_TOOLS = [
+    lambda p: nt.create_notebook(p),
+    lambda p: nt.create_notebook(p, overwrite=True),
+    lambda p: nt.insert_code_cell("x = 1", p),
+    lambda p: nt.insert_markdown_cell("# t", p),
+    lambda p: nt.modify_cell(p, 0, "x = 2"),
+    lambda p: nt.delete_cell(p, 0),
+    lambda p: nt.execute_cell(p, 0),
+    lambda p: nt.read_cell(p, 0),
+    lambda p: nt.get_notebook_state(p),
+]
+
+
+@pytest.mark.parametrize("path", _ESCAPING_PATHS)
+@pytest.mark.parametrize("call", _ALL_TOOLS)
+def test_a_path_outside_the_serving_root_is_rejected(no_http, ws, call, path):
+    out = call(path)
+    assert isinstance(out, str) and out.startswith("Error:"), out
+    assert "outside" in out
+    assert not no_http, "a refused path must not reach the server"
+    assert not (ws.parent / "escape.ipynb").exists(), "wrote outside the serving root"
+
+
+def test_create_notebook_dotdot_does_not_escape_offline(offline, ws):
+    # The issue's exact repro: no server reachable, so the disk fallback honored `..`.
+    root = ws / "root"
+    root.mkdir()
+    os.chdir(root)  # the ws fixture's monkeypatch.chdir restores cwd afterwards
+    out = nt.create_notebook("../escape.ipynb")
+    assert out.startswith("Error:")
+    assert not (ws / "escape.ipynb").exists()
+
+
+def test_a_leading_slash_still_means_the_serving_root(offline, ws):
+    # The contents API treats "/x.ipynb" as root-relative; that stays accepted.
+    assert nt.create_notebook("/top.ipynb").startswith("Created")
+    assert (ws / "top.ipynb").exists()
+
+
+def test_a_dotdot_that_stays_inside_is_still_refused_plainly(offline, ws):
+    # "a/../b.ipynb" never leaves the root, but a `..` segment is refused outright:
+    # simpler to reason about than normalizing, and no agent needs it.
+    out = nt.create_notebook("a/../b.ipynb")
+    assert out.startswith("Error:") and ".." in out
+
+
+# ── gh #125: an auth failure is an error, not a silent switch to local disk ───
+# The primitives fell back to the local filesystem on ANY status other than 200/404,
+# so a wrong/stale token (403) quietly read and wrote the agent's cwd instead of the
+# server root: an existing notebook reported "not found" and new ones landed in the
+# wrong place, both as success. Disk fallback is only for an unreachable server.
+
+
+def _status_server(monkeypatch, status):
+    class Resp:
+        status_code = status
+        reason = "Forbidden" if status == 403 else "Error"
+        text = "denied"
+
+        def json(self):
+            return {}
+
+    def respond(url, **kw):
+        return Resp()
+
+    for verb in ("get", "put", "post"):
+        monkeypatch.setattr(nt.requests, verb, respond)
+
+
+@pytest.mark.parametrize("status", [401, 403, 500])
+@pytest.mark.parametrize("call", _ALL_TOOLS)
+def test_a_server_error_status_surfaces_instead_of_falling_back_to_disk(
+    monkeypatch, ws, call, status
+):
+    # A same-named notebook sits in the agent's cwd; a fallback would read/write it.
+    nb = nbformat.v4.new_notebook()
+    nb.cells.append(nbformat.v4.new_code_cell("x = 1"))
+    nbformat.write(nb, str(ws / "report.ipynb"))
+    before = (ws / "report.ipynb").read_bytes()
+    _status_server(monkeypatch, status)
+
+    out = call("report.ipynb")
+
+    assert out.startswith("Error:"), out
+    assert f"HTTP {status}" in out
+    assert "not found" not in out.lower(), "a server error was reported as a missing notebook"
+    assert (ws / "report.ipynb").read_bytes() == before, "fell back to the local copy"
+
+
+def test_a_403_names_the_token(monkeypatch, ws):
+    _status_server(monkeypatch, 403)
+    out = nt.get_notebook_state("report.ipynb")
+    assert "LANGSTAGE_JUPYTER_TOKEN" in out
+
+
+def test_create_in_subdir_on_403_creates_nothing_on_disk(monkeypatch, ws):
+    _status_server(monkeypatch, 403)
+    out = nt.create_notebook("reports/new.ipynb")
+    assert out.startswith("Error:")
+    assert not (ws / "reports").exists()
+
+
+def test_a_non_connection_request_error_does_not_fall_back(monkeypatch, ws):
+    # A read timeout means the server IS there (it accepted the connection); writing to
+    # local disk instead would be the same silent split. Only "unreachable" falls back.
+    def slow(*a, **k):
+        raise requests.ReadTimeout("slow")
+
+    for verb in ("get", "put", "post"):
+        monkeypatch.setattr(nt.requests, verb, slow)
+    out = nt.create_notebook("new.ipynb")
+    assert out.startswith("Error:")
+    assert not (ws / "new.ipynb").exists()
+
+
+def test_an_unreachable_server_still_falls_back_to_disk(ws, monkeypatch):
+    def refused(*a, **k):
+        raise requests.ConnectionError("refused")
+
+    for verb in ("get", "put", "post"):
+        monkeypatch.setattr(nt.requests, verb, refused)
+    assert nt.create_notebook("offline.ipynb").startswith("Created")
+    assert (ws / "offline.ipynb").exists()
+
+
+# ── gh #116 / #128: execute_cell timeouts interrupt, never wipe; no stdin ─────
+
+
+def _msg(msg_type, content, parent="MID"):
+    return {"header": {"msg_type": msg_type}, "parent_header": {"msg_id": parent},
+            "content": content}
+
+
+class _ExecClient:
+    """A kernel client that plays a script of iopub messages.
+
+    ``before`` is emitted right away; ``after`` only once the kernel has been
+    interrupted (as a real kernel emits KeyboardInterrupt + idle after SIGINT)."""
+
+    def __init__(self, before, after=(), state=None):
+        self.before, self.after = list(before), list(after)
+        self.state = state if state is not None else {"interrupted": False}
+        self.execute_kwargs = None
+
+    def execute(self, source, **kwargs):
+        self.execute_kwargs = kwargs
+        return "MID"
+
+    def get_iopub_msg(self, timeout=None):
+        if self.before:
+            return self.before.pop(0)
+        if self.state["interrupted"] and self.after:
+            return self.after.pop(0)
+        time.sleep(0.01)
+        raise queue.Empty
+
+
+@pytest.fixture
+def exec_nb(offline, ws, monkeypatch):
+    """A notebook on disk whose cell 0 carries outputs from an earlier run, plus a
+    fake interrupt endpoint that records its calls."""
+    nb = nbformat.v4.new_notebook()
+    cell = nbformat.v4.new_code_cell("slow()")
+    cell.execution_count = 7
+    cell.outputs = [nbformat.v4.new_output("stream", name="stdout", text="earlier run\n")]
+    nb.cells.append(cell)
+    nbformat.write(nb, str(ws / "nb.ipynb"))
+
+    state = {"interrupted": False, "posts": []}
+
+    def fake_post(url, **kw):
+        state["posts"].append(url)
+        state["interrupted"] = True
+
+        class R:
+            status_code = 204
+        return R()
+
+    monkeypatch.setattr(nt.requests, "post", fake_post)
+    monkeypatch.setattr(nt, "get_notebook_kernel_id", lambda p: "KID")
+    monkeypatch.setattr(nt, "EXECUTE_TIMEOUT", 0.3)
+    monkeypatch.setattr(nt, "_INTERRUPT_GRACE", 1.0)
+    return state
+
+
+def _use_client(monkeypatch, client):
+    monkeypatch.setattr(nt, "_connect_kernel", lambda p: client)
+
+
+def test_execute_cell_does_not_offer_stdin(exec_nb, monkeypatch):
+    # gh #128: with allow_stdin=True and nothing servicing stdin, `input()` parks the
+    # kernel for the whole EXECUTE_TIMEOUT and then wedges it. False makes the kernel
+    # raise StdinNotImplementedError at once, like `nbconvert --execute`.
+    client = _ExecClient([_msg("execute_input", {"execution_count": 8}),
+                          _msg("status", {"execution_state": "idle"})])
+    _use_client(monkeypatch, client)
+    nt.execute_cell("nb.ipynb", 0)
+    assert client.execute_kwargs.get("allow_stdin") is False
+
+
+def test_a_timed_out_cell_interrupts_the_kernel_and_keeps_its_partial_output(
+    exec_nb, monkeypatch
+):
+    # gh #116: the timeout used to abandon the cell with the kernel still busy, so every
+    # later execute queued behind it and "timed out" too.
+    client = _ExecClient(
+        before=[_msg("execute_input", {"execution_count": 8}),
+                _msg("stream", {"name": "stdout", "text": "partial\n"})],
+        after=[_msg("error", {"ename": "KeyboardInterrupt", "evalue": "",
+                              "traceback": ["KeyboardInterrupt"]}),
+               _msg("status", {"execution_state": "idle"})],
+        state=exec_nb,
+    )
+    _use_client(monkeypatch, client)
+
+    out = nt.execute_cell("nb.ipynb", 0)
+
+    assert exec_nb["posts"] and exec_nb["posts"][0].endswith("/api/kernels/KID/interrupt")
+    assert "EXECUTE_TIMEOUT" in out and "interrupted" in out
+    cell = _cells("nb.ipynb")[0]
+    assert cell.execution_count == 8
+    assert "partial\n" in [o.get("text") for o in cell.outputs], "partial output lost"
+    assert any(o.output_type == "error" and o.ename == "KeyboardInterrupt" for o in cell.outputs)
+
+
+def test_a_cell_that_never_started_keeps_its_existing_outputs(exec_nb, monkeypatch):
+    # The kernel is busy with something else (e.g. a long cell the user ran), so our
+    # request never started before the budget ran out. The cell's earlier outputs must
+    # survive (they used to be overwritten with [] and execution_count None), and the
+    # kernel must NOT be interrupted: the running execution isn't ours to kill.
+    client = _ExecClient(before=[], state=exec_nb)
+    _use_client(monkeypatch, client)
+
+    out = nt.execute_cell("nb.ipynb", 0)
+
+    assert not exec_nb["posts"], "interrupted an execution that is not this cell's"
+    assert "did not start" in out
+    cell = _cells("nb.ipynb")[0]
+    assert cell.execution_count == 7
+    assert [o.text for o in cell.outputs] == ["earlier run\n"], "existing outputs were wiped"
+
+
+def test_a_failed_interrupt_is_reported(exec_nb, monkeypatch):
+    client = _ExecClient(before=[_msg("execute_input", {"execution_count": 8})])
+    _use_client(monkeypatch, client)
+
+    def refused(url, **kw):
+        raise requests.ConnectionError("refused")
+
+    monkeypatch.setattr(nt.requests, "post", refused)
+    out = nt.execute_cell("nb.ipynb", 0)
+    assert "could not interrupt" in out

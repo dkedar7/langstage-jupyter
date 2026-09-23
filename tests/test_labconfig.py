@@ -325,3 +325,37 @@ def test_config_dict_sources_match_describe(isolated, tmp_path):
     assert d["config"]["model_temperature"]["source"] == "env:DEEPAGENT_MODEL_TEMPERATURE"
     for key, entry in d["config"].items():
         assert f"[{entry['source']}]" in text, f"{key} source {entry['source']!r} not in table"
+
+
+# ── gh #134: an unrecognized LANGSTAGE_VIRTUAL_MODE must NOT turn the sandbox off ──
+# virtual_mode used a local lenient caster that mapped ANY string outside
+# true/1/yes/on to False. So `LANGSTAGE_VIRTUAL_MODE=enabled` (a natural way to try to
+# turn the sandbox ON) silently disabled it, with no note and --show-config crediting
+# [env] as honored. It now uses core's strict boolean caster, the same one core's
+# `debug` uses: an unrecognized value is ignored with a note, never read as False.
+@pytest.mark.parametrize("bad", ["enabled", "yep", "y", "t", "sandboxed", "disable"])
+def test_unrecognized_virtual_mode_keeps_the_sandbox_on(isolated, tmp_path, capsys, bad):
+    cfg = LabConfig.resolve(env={"LANGSTAGE_VIRTUAL_MODE": bad}, toml_start=tmp_path)
+    assert cfg.virtual_mode is True, "an unrecognized value must not disable the sandbox"
+    assert not cfg.sources["virtual_mode"].startswith("env"), "rejected value credited as env"
+    err = capsys.readouterr().err
+    assert "ignoring malformed" in err and "LANGSTAGE_VIRTUAL_MODE" in err
+
+
+def test_unrecognized_virtual_mode_env_keeps_the_toml_value(isolated, tmp_path, capsys):
+    # Falls through to the layer beneath env, like every other malformed env value (#83).
+    _toml(tmp_path, "[jupyter]\nvirtual_mode = false\n")
+    cfg = LabConfig.resolve(env={"LANGSTAGE_VIRTUAL_MODE": "enabled"}, toml_start=tmp_path)
+    assert cfg.virtual_mode is False
+    assert cfg.sources["virtual_mode"].startswith("toml")
+
+
+@pytest.mark.parametrize("value, expected", [
+    ("true", True), ("1", True), ("YES", True), ("on", True),
+    ("false", False), ("0", False), ("No", False), ("off", False),
+])
+def test_recognized_virtual_mode_values_still_parse(isolated, tmp_path, capsys, value, expected):
+    cfg = LabConfig.resolve(env={"LANGSTAGE_VIRTUAL_MODE": value}, toml_start=tmp_path)
+    assert cfg.virtual_mode is expected
+    assert cfg.sources["virtual_mode"].startswith("env")
+    assert "malformed" not in capsys.readouterr().err
