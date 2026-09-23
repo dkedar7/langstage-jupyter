@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Callable, ClassVar, Optional
 
 from langstage_core.host import HostConfig, load_toml_config  # noqa: F401  (re-exported for callers)
+from langstage_core.host.config import _env_bool_strict
 
 
 # The malformed-numeric-env handling that used to live here (a `_lenient_number`
@@ -38,10 +39,6 @@ def get_config(key: str, default: Any = None, type_cast: Optional[Callable] = No
     if env_value is not None:
         return type_cast(env_value) if type_cast else env_value
     return default
-
-
-def _to_bool(value: str) -> bool:
-    return str(value).strip().lower() in ("true", "1", "yes", "on")
 
 
 def _mask_secret(value: Any) -> str:
@@ -130,7 +127,12 @@ class LabConfig(HostConfig):
         # langstage.toml value and mislabeled the source as env (gh #83). Delegating to
         # core fixes both, and de-duplicates the leniency into one place.
         "model_temperature": ("DEEPAGENT_MODEL_TEMPERATURE", float),
-        "virtual_mode": ("DEEPAGENT_VIRTUAL_MODE", _to_bool),
+        # Core's STRICT boolean caster, the one its own `debug` field uses: an
+        # unrecognized value raises, so resolve() ignores it with a note and keeps the
+        # layer beneath env. The old local lenient caster read ANY string outside
+        # true/1/yes/on as False, so `LANGSTAGE_VIRTUAL_MODE=enabled` (an attempt to
+        # turn the sandbox ON) silently turned it OFF, credited as [env] (gh #134).
+        "virtual_mode": ("DEEPAGENT_VIRTUAL_MODE", _env_bool_strict),
         "execute_timeout": ("DEEPAGENT_EXECUTE_TIMEOUT", float),
     }
     _TOML: ClassVar[dict] = {
