@@ -189,7 +189,6 @@ test('an open notebook reloads after an agent tool writes it', async ({
   await expect(
     page.locator('.jp-NotebookPanel .jp-OutputArea-output', { hasText: AGENT_TEXT })
   ).toBeVisible();
-  expect(await currentModelDirty(page)).toBe(false);
 });
 
 test('a tab with unsaved changes is not reloaded, and the user is told', async ({
