@@ -8,8 +8,9 @@
   pre-agent copy, and its next save wrote that copy back over the agent's cells and
   outputs. The sidebar now reverts the open document when a writing tool's
   (`create_notebook`, `insert_*_cell`, `modify_cell`, `delete_cell`, `execute_cell`)
-  result arrives. A tab with unsaved edits is left alone, and JupyterLab's own "file
-  changed on disk" prompt still covers it. Covered by a new Galata test.
+  result arrives. A tab with unsaved changes is not reverted, because that would discard
+  them. Instead the sidebar says so and points to File > Reload Notebook from Disk. Covered
+  by two new Galata tests.
 - **`execute_cell` honors `clear_output` and `update_display_data` (gh #123).** Output
   cleared by `clear_output()` (progress bars, `tqdm.notebook`) was kept, and a display
   updated by `display_id` kept its first value, both in the saved notebook and in the text

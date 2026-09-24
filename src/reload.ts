@@ -67,18 +67,27 @@ export class AgentWriteTracker {
   }
 }
 
+/** What {@link reloadOpenDocument} did with the open tabs for a path. */
+export interface IReloadOutcome {
+  /** Tabs reverted to the agent's saved version. */
+  reloaded: number;
+  /** Tabs left alone because they hold unsaved changes. */
+  skippedDirty: number;
+}
+
 /**
  * Revert every open, unmodified document for `path` from disk. A tab with unsaved
- * user edits is left alone: reverting would discard them, and JupyterLab's own
- * "file changed on disk" prompt still guards its next save. Returns how many tabs
- * were reloaded.
+ * changes is left alone, because reverting would discard them. The caller tells
+ * the user, and JupyterLab's own "file changed on disk" prompt still guards that
+ * tab's next save.
  */
 export async function reloadOpenDocument(
   shell: JupyterFrontEnd.IShell | null,
   path: string
-): Promise<number> {
+): Promise<IReloadOutcome> {
+  const outcome: IReloadOutcome = { reloaded: 0, skippedDirty: 0 };
   if (!shell) {
-    return 0;
+    return outcome;
   }
   const target = normalizePath(path);
   const reverts: Promise<void>[] = [];
@@ -93,6 +102,7 @@ export async function reloadOpenDocument(
       continue;
     }
     if (context.model?.dirty) {
+      outcome.skippedDirty += 1;
       continue;
     }
     reverts.push(context.revert());
@@ -101,7 +111,9 @@ export async function reloadOpenDocument(
   results.forEach(r => {
     if (r.status === 'rejected') {
       console.warn(`langstage-jupyter: could not reload ${target}:`, r.reason);
+    } else {
+      outcome.reloaded += 1;
     }
   });
-  return reverts.length;
+  return outcome;
 }
