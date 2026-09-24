@@ -51,7 +51,12 @@ dependencies = [
     # >=1.0.31 so core's verify() treats a well-formed interrupt as a HEALTHY preflight
     # (ok=True, "turn paused cleanly on an interrupt (HITL agent)") instead of a [fail] —
     # so --verify no longer red-fails the advertised human-in-the-loop agents (jupyter #95).
-    "langstage-core[agui]>=1.0.31",
+    # >=1.0.36 for the shared fixes this package now relies on instead of local copies:
+    # parse_agent_spec (a colon-less spec errors instead of falling back, #151), malformed
+    # langstage.toml reporting in describe()/config_dict() (#86/#88), quoted-bool TOML
+    # coercion (#133), langstage_core.console.safe_print (#141), and an accurate top-level
+    # allowed_decisions on interrupt frames (read by the widget).
+    "langstage-core[agui]>=1.0.36",
     "python-dotenv>=0.19.0",
     "deepagents>=0.1.0",
     # Direct top-level imports in langstage_jupyter/agent.py. Previously only

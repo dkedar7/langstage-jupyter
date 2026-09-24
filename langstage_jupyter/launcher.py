@@ -23,35 +23,15 @@ import socket
 import secrets
 import subprocess
 
+# Console-safe print for every verdict that interpolates text this launcher did not
+# author (an agent's exception, a config value, a model reply): a character the console
+# can't encode is backslash-escaped instead of raising UnicodeEncodeError on a cp1252
+# console (gh #122, #126, #130, #140). Lives in langstage-core since 1.0.36, which adopted
+# the local helper from #141.
+from langstage_core.console import safe_print
+
 # The keyless echo agent shipped with the shared core — see `--demo`.
 DEMO_AGENT_SPEC = "langstage_core.demo.stub:graph"
-
-
-def _print(text: str = "", *, file=None) -> None:
-    """``print``, but a character the console cannot encode is escaped, not fatal.
-
-    Every verdict this launcher prints interpolates text it did not author: a
-    custom agent's exception message or name, a resolved config value, a model's
-    reply. ``print`` encodes with the console's codec, and on a default Windows
-    console that codec is cp1252, which cannot represent an accented character,
-    CJK, or an emoji. A bare ``print`` then raises ``UnicodeEncodeError``, so the
-    command dies with a raw traceback instead of printing the clean verdict it
-    exists for — and on ``--serve-check`` it dies *after* the check passed
-    (gh #122, #126, #130, #140).
-
-    The unencodable characters are escaped rather than dropped, which is what
-    ``--show-config --json`` already does through ``json.dumps``'s default
-    ``ensure_ascii``: the sibling path that never had the bug.
-
-    Only the encoding step is guarded. A stream that is closed or broken still
-    raises, because that is not this function's business to swallow.
-    """
-    stream = sys.stdout if file is None else file
-    try:
-        print(text, file=stream)
-    except UnicodeEncodeError:
-        encoding = getattr(stream, "encoding", None) or "utf-8"
-        print(text.encode(encoding, "backslashreplace").decode(encoding), file=stream)
 
 
 def _package_version() -> str:
@@ -408,7 +388,7 @@ def serve_check(agent_spec=None, *, boot_timeout=45.0, turn_timeout=60.0):
         while time.monotonic() < deadline:
             if proc.poll() is not None:  # server died before serving
                 tail = _server_output_tail()
-                _print(f"[fail] serve-check: jupyter server exited before it was ready "
+                safe_print(f"[fail] serve-check: jupyter server exited before it was ready "
                       f"(code {proc.returncode}){' — last output:' + tail if tail else ''}")
                 return 1
             try:
@@ -431,15 +411,15 @@ def serve_check(agent_spec=None, *, boot_timeout=45.0, turn_timeout=60.0):
             )
             chunks, complete, error, saw_interrupt = _summarize_sse(iter(resp))
         except urllib.error.HTTPError as e:
-            _print(f"[fail] serve-check: POST /{SERVE_CHECK_ROUTE}/chat returned HTTP {e.code} "
+            safe_print(f"[fail] serve-check: POST /{SERVE_CHECK_ROUTE}/chat returned HTTP {e.code} "
                   f"({e.reason})")
             return 1
         except (urllib.error.URLError, OSError) as e:
-            _print(f"[fail] serve-check: POST /{SERVE_CHECK_ROUTE}/chat failed: {e}")
+            safe_print(f"[fail] serve-check: POST /{SERVE_CHECK_ROUTE}/chat failed: {e}")
             return 1
 
         if error is not None:
-            _print(f"[fail] serve-check: the served turn errored: {error}")
+            safe_print(f"[fail] serve-check: the served turn errored: {error}")
             return 1
 
         name = health.get("agent_name") or spec
@@ -449,7 +429,7 @@ def serve_check(agent_spec=None, *, boot_timeout=45.0, turn_timeout=60.0):
         # it must be a distinct [ ok ] verdict, not the "incomplete turn (streamed 0
         # chunk(s), complete=True)" false [fail] the chunks<1 gate used to give (gh #95).
         if saw_interrupt and complete:
-            _print(f"[ ok ] served turn paused on interrupt (HITL agent) — endpoint healthy: "
+            safe_print(f"[ ok ] served turn paused on interrupt (HITL agent) — endpoint healthy: "
                   f"agent={name!r} (routes under /{SERVE_CHECK_ROUTE}/)")
             return 0
         if chunks < 1 or not complete:
@@ -457,7 +437,7 @@ def serve_check(agent_spec=None, *, boot_timeout=45.0, turn_timeout=60.0):
                   f"(streamed {chunks} chunk(s), complete={complete})")
             return 1
 
-        _print(f"[ ok ] served turn verified: agent={name!r}, streamed {chunks} chunks, "
+        safe_print(f"[ ok ] served turn verified: agent={name!r}, streamed {chunks} chunks, "
               f"completed cleanly (routes under /{SERVE_CHECK_ROUTE}/)")
         return 0
     finally:
@@ -624,9 +604,15 @@ def ask(prompt, *, thread_id="ask", turn_timeout=120.0):
 
         # Resolve which agent to load off the live cfg (env / langstage.toml, canonical-wins)
         # — the SAME resolver AgentWrapper.__init__ and --verify use, so all three agree.
-        module, variable = AgentWrapper.resolve_agent_target(
-            cfg.agent_spec, cfg.agent_module, cfg.agent_variable
-        )
+        # A malformed spec (from env / langstage.toml) is a clean [fail], never a silent
+        # fallback to the default agent (gh #151).
+        try:
+            module, variable = AgentWrapper.resolve_agent_target(
+                cfg.agent_spec, cfg.agent_module, cfg.agent_variable
+            )
+        except ValueError as e:
+            safe_print(f"[fail] could not load agent: {e}", file=sys.stderr)
+            return 1
 
         # Same cheap credential preflight --verify runs, scoped to the BUNDLED DEFAULT agent —
         # the only one whose model (and thus required key) we know. A custom/BYO agent is the
@@ -650,7 +636,7 @@ def ask(prompt, *, thread_id="ask", turn_timeout=120.0):
         try:
             graph, loaded_spec = AgentWrapper.load_agent_from_target(module, variable)
         except Exception as e:  # noqa: BLE001 - report a load failure cleanly
-            _print(f"[fail] could not load agent: {e}", file=sys.stderr)
+            safe_print(f"[fail] could not load agent: {e}", file=sys.stderr)
             return 1
 
         # Run one turn through the shipped core one-shot primitive. collect_chunk_frames builds
@@ -668,22 +654,22 @@ def ask(prompt, *, thread_id="ask", turn_timeout=120.0):
             print(f"[fail] agent turn timed out after {turn_timeout:g}s", file=sys.stderr)
             return 1
         except Exception as e:  # noqa: BLE001 - any turn failure is a clean [fail]
-            _print(f"[fail] agent turn failed: {e}", file=sys.stderr)
+            safe_print(f"[fail] agent turn failed: {e}", file=sys.stderr)
             return 1
 
     # The reply text to stdout (may be empty for a tool-only / interrupted turn); the
     # verdict to stderr. Exit code from the outcome.
     if result.text:
-        _print(result.text)
+        safe_print(result.text)
     if result.outcome == "error":
-        _print(f"[fail] agent errored: {result.error}", file=sys.stderr)
+        safe_print(f"[fail] agent errored: {result.error}", file=sys.stderr)
     elif result.outcome == "interrupted":
         print(
             "[note] agent paused on an interrupt (human-in-the-loop) — no final reply yet",
             file=sys.stderr,
         )
     else:
-        _print(f"[ ok ] one turn completed cleanly (agent {loaded_spec!r})", file=sys.stderr)
+        safe_print(f"[ ok ] one turn completed cleanly (agent {loaded_spec!r})", file=sys.stderr)
     return _ask_exit_code(result.outcome)
 
 
@@ -746,6 +732,16 @@ def main():
     if demo:
         agent_spec = DEMO_AGENT_SPEC
     if agent_spec:
+        # Reject a malformed -a up front (colon-less 'my_agent.py', empty object name) with
+        # core's own message, so --verify / --ask / --serve-check / the launch fail cleanly
+        # instead of silently running the default agent (gh #151).
+        from langstage_core.host import parse_agent_spec
+
+        try:
+            parse_agent_spec(agent_spec)
+        except ValueError as e:
+            safe_print(f"ERROR: -a/--agent: {e}", file=sys.stderr)
+            sys.exit(1)
         # The sidebar extension resolves LANGSTAGE_AGENT_SPEC (env beats the
         # built-in default; langstage.toml still works when nothing is set).
         # The legacy name is set too so an older installed extension version
@@ -783,8 +779,8 @@ def main():
         if "--json" in args:
             import json
             # Same omit-list as the human table above → identical key set + source labels
-            # (config_dict pins that it agrees with describe()). LabConfig extends the
-            # `toml` block with `malformed` for the found-but-unparseable case (gh #86).
+            # (config_dict pins that it agrees with describe()). langstage-core's `toml`
+            # block reports a found-but-unparseable file as `malformed` (gh #86).
             data = cfg.config_dict(omit_keys=omit)
             payload = {
                 "version": _package_version(),
@@ -796,7 +792,7 @@ def main():
             # workspace_root) as the same string the human table shows.
             print(json.dumps(payload, indent=2, default=str))
             return
-        _print(cfg.describe(omit_keys=omit))
+        safe_print(cfg.describe(omit_keys=omit))
         return
 
     # --verify: preflight the agent the extension WOULD run — resolve the spec the
@@ -822,9 +818,13 @@ def main():
         # #90). Drive the shared resolver off the live cfg (env / langstage.toml,
         # canonical-wins), which in a real launch matches the frozen config.* constants
         # AgentWrapper reads.
-        module, variable = AgentWrapper.resolve_agent_target(
-            cfg.agent_spec, cfg.agent_module, cfg.agent_variable
-        )
+        try:
+            module, variable = AgentWrapper.resolve_agent_target(
+                cfg.agent_spec, cfg.agent_module, cfg.agent_variable
+            )
+        except ValueError as e:  # malformed spec: a clean [fail], never a fallback (gh #151)
+            safe_print(f"[fail] could not load agent: {e}")
+            sys.exit(1)
 
         # The cheap credential preflight is scoped to the BUNDLED DEFAULT agent — the one
         # whose model spec (and thus required key) we know (gh #60/#66, matching /health).
@@ -852,7 +852,7 @@ def main():
         try:
             graph, _loaded_spec = AgentWrapper.load_agent_from_target(module, variable)
         except Exception as e:  # noqa: BLE001 - report a load failure cleanly
-            _print(f"[fail] could not load agent: {e}")
+            safe_print(f"[fail] could not load agent: {e}")
             sys.exit(1)
 
         # gh #92: the load succeeds for a non-runnable export — a wrong-TYPE object (a dict,
@@ -867,12 +867,12 @@ def main():
         try:
             result = _core_verify(graph)
         except Exception as e:  # noqa: BLE001 - report a verify failure cleanly
-            _print(f"[fail] could not verify agent: {e}")
+            safe_print(f"[fail] could not verify agent: {e}")
             sys.exit(1)
         if result.ok:
-            _print(f"[ ok ] agent verified: {result.reason}")
+            safe_print(f"[ ok ] agent verified: {result.reason}")
             sys.exit(0)
-        _print(f"[fail] agent verification failed: {result.reason}")
+        safe_print(f"[fail] agent verification failed: {result.reason}")
         sys.exit(1)
 
     # --serve-check: the HTTP counterpart of --verify. Boot the server extension
@@ -895,9 +895,13 @@ def main():
         if config.is_bundled_default(cfg):
             resolved_spec = None
         else:
-            module, variable = AgentWrapper.resolve_agent_target(
-                cfg.agent_spec, cfg.agent_module, cfg.agent_variable
-            )
+            try:
+                module, variable = AgentWrapper.resolve_agent_target(
+                    cfg.agent_spec, cfg.agent_module, cfg.agent_variable
+                )
+            except ValueError as e:  # malformed spec: a clean [fail] (gh #151)
+                safe_print(f"[fail] serve-check: could not load agent: {e}")
+                sys.exit(1)
             resolved_spec = f"{module}:{variable}" if variable else module
         sys.exit(serve_check(resolved_spec))
 
@@ -918,7 +922,7 @@ def main():
         sys.exit(ask(ask_prompt))
 
     if agent_spec:
-        _print(f"Agent spec: {agent_spec}")
+        safe_print(f"Agent spec: {agent_spec}")
 
     # Headline command runs `jupyter lab` — bail with a clear hint up front if
     # JupyterLab isn't installed, instead of letting the jupyter dispatcher dump
@@ -1045,7 +1049,7 @@ def main():
     # Launch Jupyter Lab. Mask the token in the PRINTED command so we don't
     # contradict the banner's "(hidden for security)" by leaking it in cleartext on
     # the very next line (gh #109) — the subprocess below still gets the real args.
-    _print(f"Launching: {' '.join(_redact_token_args(jupyter_args))}\n")
+    safe_print(f"Launching: {' '.join(_redact_token_args(jupyter_args))}\n")
     try:
         # Propagate JupyterLab's exit code — otherwise a startup failure (port in use,
         # a fatal config error, the root guard) exits the launcher 0, so `set -e`, CI

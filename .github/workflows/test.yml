@@ -58,7 +58,7 @@ jobs:
         # --verify regression test here asserts (jupyter #95) — without it CI tests
         # against a stale core and that test fails. The `minimal-install` job is what
         # exercises the declared deps.
-        pip install "langstage-core[agui]>=1.0.31"
+        pip install "langstage-core[agui]>=1.0.36"
         pip install nbformat requests tornado traitlets jupyter_client
 
     - name: Add package to Python path

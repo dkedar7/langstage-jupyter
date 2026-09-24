@@ -47,7 +47,27 @@ interface ReviewConfig {
  */
 interface InterruptData {
   action_requests: ActionRequest[];
-  review_configs: ReviewConfig[];
+  review_configs?: ReviewConfig[];
+  /**
+   * The verbs this interrupt permits, normalized by langstage-core across interrupt
+   * shapes (HumanInterrupt list, HITL middleware review_configs, plain dict). The
+   * HumanInterrupt list shape has no review_configs at all, so this is the field to read.
+   */
+  allowed_decisions?: string[];
+}
+
+/**
+ * The decisions an interrupt allows: core's top-level `allowed_decisions` (accurate since
+ * langstage-core 1.0.36), else the first review_config's list for an older core.
+ */
+function allowedDecisions(interrupt?: InterruptData): string[] {
+  if (!interrupt) {
+    return [];
+  }
+  if (Array.isArray(interrupt.allowed_decisions)) {
+    return interrupt.allowed_decisions;
+  }
+  return interrupt.review_configs?.[0]?.allowed_decisions ?? [];
 }
 
 /**
@@ -795,7 +815,7 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
                       Tool: <strong>{message.interrupt.action_requests[0]?.tool}</strong>
                     </div>
                     <div className="deepagents-action-decisions">
-                      {message.interrupt?.review_configs[0]?.allowed_decisions.includes('approve') && (
+                      {allowedDecisions(message.interrupt).includes('approve') && (
                         <button
                           className="deepagents-decision-btn deepagents-approve-btn"
                           onClick={() => {
@@ -807,7 +827,7 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
                           Approve
                         </button>
                       )}
-                      {message.interrupt?.review_configs[0]?.allowed_decisions.includes('reject') && (
+                      {allowedDecisions(message.interrupt).includes('reject') && (
                         <button
                           className="deepagents-decision-btn deepagents-reject-btn"
                           onClick={() => {
@@ -819,7 +839,7 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
                           Reject
                         </button>
                       )}
-                      {message.interrupt?.review_configs[0]?.allowed_decisions.includes('edit') && (
+                      {allowedDecisions(message.interrupt).includes('edit') && (
                         <button
                           className="deepagents-decision-btn deepagents-edit-btn"
                           onClick={() => {

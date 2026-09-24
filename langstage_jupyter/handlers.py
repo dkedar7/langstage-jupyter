@@ -5,6 +5,7 @@ import asyncio
 import json
 import os
 import threading
+import warnings
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Dict
 
@@ -41,16 +42,61 @@ _PROVIDER_KEY_ENV = {
 }
 
 
+# Bare-name prefixes -> provider, used only if langchain's own parser can't be imported.
+# Mirrors the common cases of langchain's ``_attempt_infer_model_provider`` (gh #136).
+_FALLBACK_PROVIDER_PREFIXES = (
+    (("gpt-", "o1", "o3", "chatgpt", "text-davinci"), "openai"),
+    (("claude",), "anthropic"),
+    (("command",), "cohere"),
+    (("mistral", "mixtral"), "mistralai"),
+    (("deepseek",), "deepseek"),
+    (("grok",), "xai"),
+)
+
+
+def _infer_model_provider(model_name: str) -> str:
+    """The provider ``init_chat_model(model_name)`` would pick, or ``""`` if none.
+
+    The default agent builds its model with ``init_chat_model(MODEL_NAME)``, which accepts
+    both ``provider:model`` and a bare model name whose provider it infers
+    (``claude-sonnet-4-5`` -> anthropic, ``gpt-4o`` -> openai). Reading only the
+    ``provider:`` prefix made the key preflight skip every bare name, so ``/health`` showed a
+    false green and ``--verify`` hit a raw provider error (gh #136). So this asks langchain's
+    own parser, which is the one ``init_chat_model`` calls, and falls back to the common
+    prefixes only if that private helper ever moves.
+    """
+    try:
+        from langchain.chat_models.base import _parse_model
+    except ImportError:  # pragma: no cover - langchain moved its private helper
+        _parse_model = None
+    if _parse_model is not None:
+        try:
+            with warnings.catch_warnings():
+                # A bare 'gemini-*' name warns about a future provider default change.
+                warnings.simplefilter("ignore")
+                return _parse_model(model_name, None)[1]
+        except Exception:  # noqa: BLE001 - "can't infer" is ValueError; anything else too
+            return ""
+    lowered = model_name.lower()
+    if ":" in lowered:
+        return lowered.split(":", 1)[0]
+    for prefixes, provider in _FALLBACK_PROVIDER_PREFIXES:
+        if lowered.startswith(prefixes):
+            return provider
+    return ""
+
+
 def _missing_provider_key(model_name: str) -> Optional[str]:
     """The provider key ``model_name`` needs, if it is absent from the environment.
 
-    Pure over ``model_name`` (the provider is the part before ``:``). Shared by the
-    ``/health`` default-agent readiness check and the launcher's ``--verify`` preflight
-    so both surfaces name the *same* variable for the same failure, instead of one dumping
-    a raw provider auth error (gh #60, gh #66). Returns ``None`` when the provider is
-    unknown or the key is already set.
+    Pure over ``model_name``: the provider is inferred the way ``init_chat_model`` infers
+    it, so a bare ``claude-*`` / ``gpt-*`` name is covered as well as ``provider:model``
+    (gh #136). Shared by the ``/health`` default-agent readiness check and the launcher's
+    ``--verify`` / ``--ask`` preflights so every surface names the *same* variable for the
+    same failure, instead of one dumping a raw provider auth error (gh #60, gh #66).
+    Returns ``None`` when the provider is unknown or the key is already set.
     """
-    provider = model_name.split(":", 1)[0].lower() if ":" in model_name else ""
+    provider = _infer_model_provider(model_name) if model_name else ""
     env_var = _PROVIDER_KEY_ENV.get(provider)
     if env_var and not os.environ.get(env_var):
         return env_var
@@ -91,6 +137,10 @@ def _agent_readiness():
     agent = get_agent()
     obj = getattr(agent, "agent", None)
     if obj is None:
+        # Name the actual cause when there is one, e.g. a malformed agent spec (gh #151).
+        error = getattr(agent, "load_error", None)
+        if isinstance(error, str) and error:
+            return "agent_not_loaded", False, f"Agent failed to load: {error}"
         return "agent_not_loaded", False, "Agent module not found or failed to load"
     if not callable(getattr(obj, "astream", None)):
         return (

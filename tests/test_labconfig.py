@@ -60,7 +60,9 @@ def test_toml_layer(isolated, tmp_path):
     assert cfg.jupyter_token == "tok"
     assert cfg.virtual_mode is False
     assert cfg.execute_timeout == 60.0
-    assert cfg.agent_spec == "a.py:g"
+    # Since langstage-core 1.0.36 a relative file-form spec from TOML resolves against
+    # the directory of the file that defined it (not the cwd), so it comes back absolute.
+    assert cfg.agent_spec == f"{tmp_path / 'a.py'}:g"
     assert cfg.agent_module == "custom.mod"
 
 
@@ -238,7 +240,8 @@ def test_show_config_footer_flags_malformed_toml_as_found(isolated, tmp_path, ca
     text = LabConfig.resolve(env={}, toml_start=tmp_path).describe()
 
     assert "no langstage.toml" not in text, "malformed file still reported as absent (gh #86)"
-    assert "malformed" in text, "footer should say the found file is malformed"
+    # langstage-core (>=1.0.36) renders this footer: "TOML: <path> is MALFORMED ...".
+    assert "malformed" in text.lower(), "footer should say the found file is malformed"
     assert str(tmp_path / "langstage.toml") in text, "footer should name the found file"
     # ...and it agrees with the stderr note langstage-core emits for the same file.
     assert "ignoring malformed config" in capsys.readouterr().err
@@ -264,11 +267,10 @@ def test_show_config_footer_absent_toml_still_reports_not_found(isolated, tmp_pa
 
 
 # ── gh #88: config_dict() is the machine-readable twin of describe() ──
-# LabConfig extends langstage-core's config_dict() the same way it extends describe():
-# the base `toml` block is {found, path}, keyed off the SUCCESSFULLY-parsed paths, so a
-# present-but-unparseable file would read as {found: false} — the same "looks absent"
-# lie #86 fixed for the human footer. The override injects `malformed` and, only when no
-# valid file parsed, flips found/path to name the found-but-malformed file.
+# A present-but-unparseable file must not read as {found: false} — the same "looks
+# absent" lie #86 fixed for the human footer. Since langstage-core 1.0.36 the base
+# config_dict() reports `malformed` and names the found-but-malformed file itself, so
+# LabConfig's former local override is gone; these tests pin the behavior end to end.
 
 _OMIT = ["host", "port", "title", "jupyter_token", "jupyter_server_url"]
 
