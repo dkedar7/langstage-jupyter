@@ -117,12 +117,35 @@ def ensure_jupyterlab():
         sys.exit(1)
 
 
+class LauncherArgError(ValueError):
+    """A launcher-only flag was given without the value it needs (gh #115)."""
+
+
+def _flag_value(args, i, flag, what):
+    """The value after a space-form ``flag`` at ``args[i]``, or :class:`LauncherArgError`.
+
+    A missing value (the flag is last) or one that is itself a flag (``--ask --demo``,
+    typically an unset ``"$MSG"``) is an error. Those used to leak the flag into the
+    ``jupyter lab`` passthrough, or quietly consume the next flag as the value (gh #115).
+    The ``--flag=VALUE`` form is never checked, so a value that starts with ``-`` can
+    still be passed that way.
+    """
+    if i + 1 >= len(args) or args[i + 1].startswith("-"):
+        raise LauncherArgError(
+            f"{flag} needs {what}. Pass it as `{flag} VALUE`, or `{flag}=VALUE` when the "
+            "value itself starts with '-'."
+        )
+    return args[i + 1]
+
+
 def extract_agent_args(args):
     """Split our agent flags out of the passthrough jupyter-lab args.
 
-    Handles ``-a SPEC`` / ``--agent SPEC`` / ``--agent=SPEC`` and ``--demo``.
-    Returns ``(agent_spec, demo, remaining_args)`` — remaining_args go to
-    ``jupyter lab`` untouched.
+    Handles ``-a SPEC`` / ``--agent SPEC`` / ``-a=SPEC`` / ``--agent=SPEC`` and
+    ``--demo``. Returns ``(agent_spec, demo, remaining_args)``; remaining_args go to
+    ``jupyter lab`` untouched. A space-form flag with no spec after it raises
+    :class:`LauncherArgError` (gh #115). ``-a=SPEC`` used to leak through to jupyter
+    and the default agent ran instead (gh #135).
     """
     agent_spec = None
     demo = False
@@ -130,11 +153,11 @@ def extract_agent_args(args):
     i = 0
     while i < len(args):
         arg = args[i]
-        if arg in ("-a", "--agent") and i + 1 < len(args):
-            agent_spec = args[i + 1]
+        if arg in ("-a", "--agent"):
+            agent_spec = _flag_value(args, i, "-a/--agent", "an agent spec (module:attr)")
             i += 2
             continue
-        if arg.startswith("--agent="):
+        if arg.startswith(("--agent=", "-a=")):
             agent_spec = arg.split("=", 1)[1]
             i += 1
             continue
@@ -518,6 +541,20 @@ def check_connection(*, timeout=5.0):
         print("[fail] LANGSTAGE_JUPYTER_SERVER_URL is not set — nothing to check.")
         return 1
 
+    # A URL without an http(s) scheme ('localhost', '8888', '//host:8888') made urllib
+    # raise a bare ValueError out of main() instead of this preflight's [fail] (gh #149).
+    # 'localhost:8888' parses as scheme 'localhost', so check the scheme, not just its
+    # presence.
+    import urllib.parse
+
+    parsed = urllib.parse.urlsplit(server_url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        safe_print(
+            f"[fail] LANGSTAGE_JUPYTER_SERVER_URL={server_url!r} is not an http(s) URL. "
+            "Include the scheme and host, e.g. http://localhost:8888."
+        )
+        return 1
+
     def _get(path):
         req = urllib.request.Request(
             f"{server_url}{path}",
@@ -679,15 +716,17 @@ def _extract_ask(args):
     Mirrors ``_find_user_token``'s space-and-equals scan. ``--ask`` is a launcher flag, not
     a ``jupyter lab`` one, so it's stripped from the passthrough. Returns ``prompt=None``
     when absent (feature off); an explicitly empty ``--ask=`` / ``--ask ""`` is a real (if
-    odd) prompt and is returned as ``""`` so the caller can still run a turn with it.
+    odd) prompt and is returned as ``""`` so the caller can still run a turn with it. A
+    bare ``--ask``, or one followed by another flag, raises :class:`LauncherArgError`
+    instead of booting a server or eating that flag as the prompt (gh #115).
     """
     prompt = None
     remaining = []
     i = 0
     while i < len(args):
         arg = args[i]
-        if arg == "--ask" and i + 1 < len(args):
-            prompt = args[i + 1]
+        if arg == "--ask":
+            prompt = _flag_value(args, i, "--ask", "a prompt")
             i += 2
             continue
         if arg.startswith("--ask="):
@@ -697,6 +736,28 @@ def _extract_ask(args):
         remaining.append(arg)
         i += 1
     return prompt, remaining
+
+
+#: The spellings `jupyter lab` accepts for the server port. ``--port`` is an alias for
+#: ``--ServerApp.port``; missing the long one made the launcher inject a second port and
+#: jupyter abort with "port only accepts one value, got 2" (gh #138).
+PORT_ARG_NAMES = ("--port", "--ServerApp.port")
+
+#: ``port_retries`` spellings. Jupyter's default (50) moves a busy port to the next free
+#: one, so the URL the launcher published would point at the wrong server (gh #129).
+PORT_RETRIES_ARG_NAMES = ("--port-retries", "--ServerApp.port_retries")
+
+
+def _find_arg_value(args, names):
+    """The raw value of the first ``NAME VALUE`` / ``NAME=VALUE`` for any of ``names``,
+    else ``None``. The same space-and-equals scan as :func:`_find_user_token`."""
+    for i, arg in enumerate(args):
+        for name in names:
+            if arg == name and i + 1 < len(args):
+                return args[i + 1]
+            if arg.startswith(name + "="):
+                return arg.split("=", 1)[1]
+    return None
 
 
 def main():
@@ -721,11 +782,15 @@ def main():
     # reflects the agent the same invocation would launch. Previously --show-config
     # short-circuited before this and always reported agent_spec=None even with
     # -a/--demo (gh #-dogfood).
-    agent_spec, demo, args = extract_agent_args(args)
     # Strip our one-shot --ask PROMPT too (it's a launcher flag, not a jupyter one), so it
     # never leaks into the `jupyter lab` passthrough. Parsed here so --ask reflects the same
     # -a/--demo agent this invocation would launch. (gh #101)
-    ask_prompt, args = _extract_ask(args)
+    try:
+        agent_spec, demo, args = extract_agent_args(args)
+        ask_prompt, args = _extract_ask(args)
+    except LauncherArgError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(1)
     if demo and agent_spec:
         print("ERROR: --demo and -a/--agent are mutually exclusive")
         sys.exit(1)
@@ -929,30 +994,32 @@ def main():
     # its help later (gh #24).
     ensure_jupyterlab()
 
-    # Check if user specified a port
+    # Check if user specified a port, via `--port` or its `--ServerApp.port` alias (gh #138).
+    # A supplied port MUST parse. If it doesn't (including an empty value, e.g.
+    # `--port=$PORT` with PORT unset), fail fast with a clear message. Previously we
+    # silently swallowed the parse error, auto-detected our OWN port, AND still passed the
+    # user's malformed --port token through to jupyter lab — so jupyter aborted with a
+    # confusing "port only accepts one value, got 2" naming a port the user never typed.
+    # (gh #40) `--port 0` (let the OS pick) is refused too: the launcher publishes the URL
+    # to the agent's notebook tools before the server binds, so it can't know a port the
+    # OS picks later, and it used to read 0 as "no port" and advertise :8888 (gh #155).
     user_port = None
-    for i, arg in enumerate(args):
-        if arg == '--port' and i + 1 < len(args):
-            raw = args[i + 1]
-        elif arg.startswith('--port='):
-            raw = arg.split('=', 1)[1]
-        else:
-            continue
-        # A --port was supplied — it MUST parse. If it doesn't (including an empty
-        # value, e.g. `--port=$PORT` with PORT unset), fail fast with a clear
-        # message. Previously we silently swallowed the parse error, auto-detected
-        # our OWN port, AND still passed the user's malformed --port token through
-        # to jupyter lab — so jupyter aborted with a confusing "port only accepts
-        # one value, got 2" naming a port the user never typed. (gh #40)
+    raw = _find_arg_value(args, PORT_ARG_NAMES)
+    if raw is not None:
         try:
             user_port = int(raw)
         except (ValueError, TypeError):
-            print(f"ERROR: invalid --port value: {raw!r}")
+            user_port = None
+        if user_port is None or not 1 <= user_port <= 65535:
+            print(
+                f"ERROR: invalid --port value: {raw!r}. Pass a port between 1 and 65535 "
+                "(the agent's notebook tools are pointed at it before the server starts, "
+                "so 0 = 'any free port' can't be used), or omit --port to auto-detect one."
+            )
             sys.exit(1)
-        break
 
     # Find available port
-    if user_port:
+    if user_port is not None:
         port = user_port
         print(f"Using user-specified port: {port}")
     else:
@@ -1013,6 +1080,13 @@ def main():
     # (a malformed --port already exited above), so we never pass two --port values.
     if user_port is None:
         jupyter_args.extend(['--port', str(port)])
+
+    # Bind exactly the port published above, or fail. JupyterLab's port_retries (default
+    # 50) otherwise moves a busy port to the next free one without an error, and the
+    # agent's notebook tools keep calling the old URL: nothing there, or a different
+    # server (gh #129). A port_retries the user set explicitly is left alone.
+    if _find_arg_value(args, PORT_RETRIES_ARG_NAMES) is None:
+        jupyter_args.append('--ServerApp.port_retries=0')
 
     # Inject our token only when the user didn't pin one themselves — otherwise
     # jupyter_server sees the token twice and aborts (gh #69, the token twin of #40).

@@ -109,7 +109,10 @@ langstage-jupyter -a agent_a.py:graph    # -> localhost:8888
 langstage-jupyter -a agent_b.py:graph    # -> localhost:8889
 ```
 
-Widen the scan with `LANGSTAGE_JUPYTER_PORT_ATTEMPTS` (default 100), or pin a port with `--port`.
+Widen the scan with `LANGSTAGE_JUPYTER_PORT_ATTEMPTS` (default 100), or pin a port with `--port`
+(or `--ServerApp.port`). A pinned port that is busy fails the launch instead of moving to
+another port, because the agent's notebook tools are pointed at the port you pinned. `--port 0`
+is refused for the same reason.
 Note that two sessions launched from the **same directory** serve the same notebooks on disk —
 launch from different directories if you want separate workspaces.
 

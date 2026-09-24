@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.6.32 - 2026-09-24
+
+### Fixed
+- **An open notebook tab reloads after the agent writes it (gh #160).** The notebook tools
+  save through the contents API, but without real-time collaboration an open tab kept its
+  pre-agent copy, and its next save wrote that copy back over the agent's cells and
+  outputs. The sidebar now reverts the open document when a writing tool's
+  (`create_notebook`, `insert_*_cell`, `modify_cell`, `delete_cell`, `execute_cell`)
+  result arrives. A tab with unsaved edits is left alone, and JupyterLab's own "file
+  changed on disk" prompt still covers it. Covered by a new Galata test.
+- **`execute_cell` honors `clear_output` and `update_display_data` (gh #123).** Output
+  cleared by `clear_output()` (progress bars, `tqdm.notebook`) was kept, and a display
+  updated by `display_id` kept its first value, both in the saved notebook and in the text
+  the agent reads back. Outputs are now kept the way JupyterLab keeps them.
+- **`execute_cell` returns an `Error:` string when the server is unreachable (gh #124)**
+  instead of raising `requests.ConnectionError` and ending the agent's turn.
+- **Notebook paths containing `#` or `?` reach the right file (gh #127).** The path is
+  percent-encoded into the contents-API URL, so `Experiment #3.ipynb` no longer creates a
+  stray file named `Experiment `.
+- **A trailing slash on `LANGSTAGE_JUPYTER_SERVER_URL` no longer breaks the notebook tools
+  (gh #154).** The URL is normalized once in config, so the tools and
+  `--check-connection` agree.
+- **`--check-connection` gives a `[fail]` for a URL without an http(s) scheme (gh #149)**
+  (`localhost`, `8888`, `//host:8888`) instead of a raw `ValueError` traceback.
+- **A non-positive `execute_timeout` is rejected with a note (gh #142).** `0` or a
+  negative value (env or `langstage.toml`) made every `execute_cell` time out before
+  running. It now falls back to the default 300s, like a malformed value.
+- **Launcher argument handling:**
+  - A bare `--ask` / `-a` / `--agent`, or one followed by another flag, is a launcher error
+    (exit 1). It used to boot a server and die in jupyter's argparse, or take the next flag
+    as its value (`--ask --demo`) (gh #115). Use `--ask=VALUE` for a prompt that starts
+    with `-`.
+  - `-a=SPEC` is honored like `--agent=SPEC`. It used to be dropped, so the default agent
+    ran and `--serve-check` gave a false green (gh #135).
+  - `--ServerApp.port` is recognized as a port pin, so the launcher no longer adds its own
+    `--port` and crashes jupyter with "got 2 values" (gh #138).
+  - The launcher passes `--ServerApp.port_retries=0` (unless you set `port_retries`), so a
+    busy port fails the launch. JupyterLab used to move to the next port while the agent's
+    tools still called the old one (gh #129).
+  - `--port 0` and out-of-range ports are refused with a clear error. `0` was read as "no
+    port", so the launcher advertised `:8888` while the server bound a random port (gh #155).
 ## 0.6.31 - 2026-09-24
 
 ### Fixed

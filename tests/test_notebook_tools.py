@@ -714,3 +714,110 @@ def test_a_failed_interrupt_is_reported(exec_nb, monkeypatch):
     monkeypatch.setattr(nt.requests, "post", refused)
     out = nt.execute_cell("nb.ipynb", 0)
     assert "could not interrupt" in out
+
+
+# ── gh #123: clear_output / update_display_data are honored like JupyterLab ────
+
+
+def test_clear_output_wait_drops_what_came_before(exec_nb, monkeypatch):
+    client = _ExecClient([
+        _msg("execute_input", {"execution_count": 8}),
+        _msg("stream", {"name": "stdout", "text": "STALE_before\n"}),
+        _msg("clear_output", {"wait": True}),
+        _msg("stream", {"name": "stdout", "text": "CORRECT_after\n"}),
+        _msg("status", {"execution_state": "idle"}),
+    ])
+    _use_client(monkeypatch, client)
+
+    out = nt.execute_cell("nb.ipynb", 0)
+
+    assert "STALE_before" not in out and "CORRECT_after" in out
+    assert [o.get("text") for o in _cells("nb.ipynb")[0].outputs] == ["CORRECT_after\n"]
+
+
+def test_clear_output_wait_with_nothing_after_keeps_the_old_output(exec_nb, monkeypatch):
+    # wait=True defers the clear until new output arrives; none does, so nothing clears.
+    client = _ExecClient([
+        _msg("execute_input", {"execution_count": 8}),
+        _msg("stream", {"name": "stdout", "text": "kept\n"}),
+        _msg("clear_output", {"wait": True}),
+        _msg("status", {"execution_state": "idle"}),
+    ])
+    _use_client(monkeypatch, client)
+    nt.execute_cell("nb.ipynb", 0)
+    assert [o.get("text") for o in _cells("nb.ipynb")[0].outputs] == ["kept\n"]
+
+
+def test_clear_output_without_wait_clears_at_once(exec_nb, monkeypatch):
+    client = _ExecClient([
+        _msg("execute_input", {"execution_count": 8}),
+        _msg("stream", {"name": "stdout", "text": "gone\n"}),
+        _msg("clear_output", {"wait": False}),
+        _msg("status", {"execution_state": "idle"}),
+    ])
+    _use_client(monkeypatch, client)
+    out = nt.execute_cell("nb.ipynb", 0)
+    assert _cells("nb.ipynb")[0].outputs == []
+    assert "gone" not in out
+
+
+def test_update_display_data_replaces_the_displayed_value(exec_nb, monkeypatch):
+    client = _ExecClient([
+        _msg("execute_input", {"execution_count": 8}),
+        _msg("display_data", {"data": {"text/plain": "'V1'"}, "metadata": {},
+                              "transient": {"display_id": "d1"}}),
+        _msg("update_display_data", {"data": {"text/plain": "'V2_FINAL'"}, "metadata": {},
+                                     "transient": {"display_id": "d1"}}),
+        _msg("status", {"execution_state": "idle"}),
+    ])
+    _use_client(monkeypatch, client)
+
+    out = nt.execute_cell("nb.ipynb", 0)
+
+    outputs = _cells("nb.ipynb")[0].outputs
+    assert [o.data["text/plain"] for o in outputs] == ["'V2_FINAL'"]
+    assert "V2_FINAL" in out and "'V1'" not in out
+    assert "transient" not in outputs[0], "transient display ids are not saved to the file"
+
+
+# ── gh #124: an unreachable server is an Error string from execute_cell too ─────
+
+
+def test_execute_cell_with_the_server_down_returns_an_error_string(offline, ws):
+    nt.kernel_clients.clear()
+    nb = nbformat.v4.new_notebook()
+    nb.cells.append(nbformat.v4.new_code_cell("1 + 1"))
+    nbformat.write(nb, str(ws / "d.ipynb"))
+
+    out = nt.execute_cell("d.ipynb", 0)
+
+    assert out.startswith("Error:"), out
+    assert "kernel" in out
+
+
+# ── gh #127: the path is percent-encoded into the contents URL ──────────────────
+
+
+@pytest.mark.parametrize("path, encoded", [
+    ("Experiment #3.ipynb", "Experiment%20%233.ipynb"),
+    ("query?a.ipynb", "query%3Fa.ipynb"),
+    ("sub dir/50%.ipynb", "sub%20dir/50%25.ipynb"),
+])
+def test_contents_url_percent_encodes_the_path(monkeypatch, path, encoded):
+    monkeypatch.setattr(nt, "JUPYTER_SERVER_URL", "http://localhost:8888")
+    assert nt._contents_url(path) == f"http://localhost:8888/api/contents/{encoded}"
+
+
+def test_create_notebook_with_a_hash_reaches_the_full_path(monkeypatch, ws):
+    seen = []
+
+    class R:
+        status_code = 404
+
+    class Created:
+        status_code = 201
+
+    monkeypatch.setattr(nt.requests, "get", lambda url, **kw: seen.append(url) or R())
+    monkeypatch.setattr(nt.requests, "put", lambda url, **kw: seen.append(url) or Created())
+    assert nt.create_notebook("Experiment #3.ipynb").startswith("Created")
+    assert seen and all(u.endswith("/api/contents/Experiment%20%233.ipynb") for u in seen)

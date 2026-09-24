@@ -56,6 +56,23 @@ def _mask_secret(value: Any) -> str:
     return "****" + s[-4:]
 
 
+def _positive_seconds(value: Any) -> float:
+    """``execute_timeout`` must be > 0. A 0 or negative value used to be applied as-is,
+    so every ``execute_cell`` hit its deadline before reading a message and reported a
+    spurious timeout (gh #142). ``nan`` fails the same test."""
+    seconds = float(value)
+    if not seconds > 0:
+        raise ValueError(f"must be a positive number of seconds, got {seconds!r}")
+    return seconds
+
+
+def _strip_trailing_slash(value: Any) -> str:
+    """Normalize ``jupyter_server_url`` once for every consumer. A trailing slash (as
+    copied from the browser) made the notebook tools request ``//api/contents/...``,
+    which 404s, while ``--check-connection`` stripped it and passed (gh #154)."""
+    return str(value).rstrip("/")
+
+
 @dataclass
 class LabConfig(HostConfig):
     """langstage-jupyter's view of the shared config.
@@ -111,6 +128,13 @@ class LabConfig(HostConfig):
         "model_temperature": "model.temperature",
         "virtual_mode": "jupyter.virtual_mode",
         "execute_timeout": "jupyter.execute_timeout",
+    }
+
+    # Semantic checks core's resolve() runs after every layer; a value that raises here
+    # degrades to the field default with a `note:` (the core mechanism, gh langstage #123).
+    _VALIDATORS: ClassVar[dict] = {
+        "execute_timeout": _positive_seconds,
+        "jupyter_server_url": _strip_trailing_slash,
     }
 
     # Fields whose resolved value is a secret and must never be printed verbatim by
