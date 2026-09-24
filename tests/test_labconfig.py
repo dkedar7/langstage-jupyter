@@ -361,3 +361,31 @@ def test_recognized_virtual_mode_values_still_parse(isolated, tmp_path, capsys, 
     assert cfg.virtual_mode is expected
     assert cfg.sources["virtual_mode"].startswith("env")
     assert "malformed" not in capsys.readouterr().err
+
+
+# ── gh #142: a non-positive execute_timeout is rejected with a note, not applied ──
+@pytest.mark.parametrize("bad", ["0", "-1", "-5", "nan"])
+def test_non_positive_execute_timeout_falls_back_to_the_default(isolated, tmp_path, capsys, bad):
+    cfg = LabConfig.resolve(env={"LANGSTAGE_EXECUTE_TIMEOUT": bad}, toml_start=tmp_path)
+    assert cfg.execute_timeout == 300.0
+    assert cfg.sources["execute_timeout"] == "default"
+    assert "execute_timeout" in capsys.readouterr().err
+
+
+def test_non_positive_execute_timeout_in_toml_is_rejected(isolated, tmp_path, capsys):
+    _toml(tmp_path, "[jupyter]\nexecute_timeout = 0\n")
+    cfg = LabConfig.resolve(env={}, toml_start=tmp_path)
+    assert cfg.execute_timeout == 300.0
+
+
+def test_positive_execute_timeout_still_applies(isolated, tmp_path):
+    cfg = LabConfig.resolve(env={"LANGSTAGE_EXECUTE_TIMEOUT": "0.5"}, toml_start=tmp_path)
+    assert cfg.execute_timeout == 0.5
+
+
+# ── gh #154: a trailing slash on the server URL is normalized once, in config ──
+@pytest.mark.parametrize("url", ["http://localhost:8945/", "http://localhost:8945//"])
+def test_server_url_trailing_slash_is_stripped(isolated, tmp_path, url):
+    cfg = LabConfig.resolve(env={"LANGSTAGE_JUPYTER_SERVER_URL": url}, toml_start=tmp_path)
+    assert cfg.jupyter_server_url == "http://localhost:8945"
+    assert cfg.sources["jupyter_server_url"].startswith("env")

@@ -30,6 +30,7 @@ import os
 import queue
 import re
 import time
+import urllib.parse
 from typing import Annotated, Optional
 
 import nbformat
@@ -121,7 +122,10 @@ def _confine(notebook_path: str) -> str:
 
 
 def _contents_url(notebook_path: str) -> str:
-    return f"{JUPYTER_SERVER_URL}/api/contents/{notebook_path}"
+    # Percent-encode the path (keeping its '/' separators). Interpolated raw, a legal
+    # filename such as "Experiment #3.ipynb" was cut at the '#' (or '?') by the HTTP
+    # layer, so every tool silently worked on a truncated path (gh #127).
+    return f"{JUPYTER_SERVER_URL}/api/contents/{urllib.parse.quote(notebook_path, safe='/')}"
 
 
 def _refused(resp, action: str, notebook_path: str) -> ServerRefused:
@@ -225,8 +229,11 @@ def _ensure_parent_dirs(notebook_path: str) -> None:
 
 def _save_notebook(nb: nbformat.NotebookNode, notebook_path: str) -> None:
     """Write a notebook back through the same authority :func:`_load_notebook`
-    read it from — the server first (which also keeps the open tab in sync and
-    preserves scroll position), then disk, only if the server is unreachable."""
+    read it from — the server first, then disk, only if the server is unreachable.
+
+    A server write does not by itself update a notebook open in a tab (that needs
+    real-time collaboration). The sidebar reloads an open, unmodified tab when the
+    tool's result arrives (gh #160)."""
     try:
         resp = requests.put(
             _contents_url(notebook_path),
@@ -625,6 +632,15 @@ def execute_cell(
 
     try:
         client = _connect_kernel(notebook_path)
+    except requests.RequestException as e:
+        # Kernels only exist on the server, so there is no disk fallback here: an
+        # unreachable server is an Error string like every other tool's, not a raw
+        # requests.ConnectionError that ends the agent's turn (gh #124).
+        return (
+            f"Error: could not start/attach a kernel for {notebook_path}: the Jupyter "
+            f"server at {JUPYTER_SERVER_URL} could not be reached ({type(e).__name__}). "
+            "Check that JupyterLab is running (`langstage-jupyter --check-connection`)."
+        )
     except (ValueError, RuntimeError) as e:
         return f"Error: could not start/attach a kernel for {notebook_path}: {e}"
 
@@ -667,7 +683,7 @@ def execute_cell(
                 f" The kernel was interrupted but did not go idle within {_INTERRUPT_GRACE}s;"
                 " it may need a restart from JupyterLab."
             )
-        run.texts.append(budget + " Output above may be incomplete.")
+        run.notes.append(budget + " Output above may be incomplete.")
 
     # A run that started replaces the cell's outputs with its own, partial ones
     # included (that is what running a cell means in JupyterLab too).
@@ -675,18 +691,61 @@ def execute_cell(
     cell.outputs = run.outputs
     _save_notebook(nb, notebook_path)
 
-    summary = "\n".join(run.texts) if run.texts else "(no output)"
-    return f"Executed cell [{run.execution_count}] in {notebook_path}:\n{summary}"
+    return f"Executed cell [{run.execution_count}] in {notebook_path}:\n{run.summary()}"
 
 
 class _Run:
-    """What one execution has produced so far."""
+    """What one execution has produced so far, kept the way JupyterLab keeps it.
+
+    ``clear_output`` and ``update_display_data`` are applied as they arrive, so the
+    saved outputs and the summary match what the tab renders. Before, both messages
+    were ignored: pre-clear output was kept and a display updated by ``display_id``
+    kept its first value (gh #123)."""
 
     def __init__(self):
         self.outputs: list = []
-        self.texts: list[str] = []
+        self.notes: list[str] = []
         self.execution_count: Optional[int] = None
         self.started = False
+        self._clear_on_next_output = False
+        #: display_id -> the output nodes that display it (for update_display_data).
+        self._displays: dict[str, list] = {}
+
+    def add(self, output, display_id: Optional[str] = None) -> None:
+        if self._clear_on_next_output:  # clear_output(wait=True) is applied lazily
+            self.outputs = []
+            self._clear_on_next_output = False
+        self.outputs.append(output)
+        if display_id:
+            self._displays.setdefault(display_id, []).append(output)
+
+    def clear(self, wait: bool) -> None:
+        if wait:
+            self._clear_on_next_output = True
+        else:
+            self.outputs = []
+            self._clear_on_next_output = False
+
+    def update_display(self, display_id: Optional[str], data: dict, metadata: dict) -> None:
+        for output in self._displays.get(display_id or "", []):
+            output["data"] = data
+            output["metadata"] = metadata
+
+    def summary(self) -> str:
+        texts = [_output_text(o) for o in self.outputs] + self.notes
+        return "\n".join(texts) if texts else "(no output)"
+
+
+def _output_text(output) -> str:
+    """The one-line-per-output text the agent reads back from ``execute_cell``."""
+    kind = output["output_type"]
+    if kind == "stream":
+        return f"[{output['name']}] {output['text']}"
+    if kind == "execute_result":
+        return output["data"].get("text/plain", str(output["data"]))
+    if kind == "display_data":
+        return f"[display] {output['data'].get('text/plain', 'Rich content')}"
+    return f"ERROR: {output['ename']}: {output['evalue']}\n" + "\n".join(output["traceback"])
 
 
 def _collect(client, msg_id: str, run: _Run, deadline: float) -> bool:
@@ -707,24 +766,27 @@ def _collect(client, msg_id: str, run: _Run, deadline: float) -> bool:
         if msg_type == "status" and content["execution_state"] == "idle":
             return True
         run.started = True
+        display_id = (content.get("transient") or {}).get("display_id")
         if msg_type == "execute_input":
             run.execution_count = content["execution_count"]
         elif msg_type == "stream":
-            run.outputs.append(nbformat.v4.new_output("stream", name=content["name"], text=content["text"]))
-            run.texts.append(f"[{content['name']}] {content['text']}")
+            run.add(nbformat.v4.new_output("stream", name=content["name"], text=content["text"]))
         elif msg_type == "execute_result":
-            run.outputs.append(nbformat.v4.new_output(
-                "execute_result", data=content["data"], execution_count=content["execution_count"]))
-            run.texts.append(content["data"].get("text/plain", str(content["data"])))
+            run.add(nbformat.v4.new_output(
+                "execute_result", data=content["data"], metadata=content.get("metadata", {}),
+                execution_count=content["execution_count"]), display_id)
         elif msg_type == "display_data":
-            run.outputs.append(nbformat.v4.new_output("display_data", data=content["data"]))
-            run.texts.append(f"[display] {content['data'].get('text/plain', 'Rich content')}")
+            run.add(nbformat.v4.new_output(
+                "display_data", data=content["data"], metadata=content.get("metadata", {})),
+                display_id)
+        elif msg_type == "update_display_data":
+            run.update_display(display_id, content["data"], content.get("metadata", {}))
+        elif msg_type == "clear_output":
+            run.clear(bool(content.get("wait")))
         elif msg_type == "error":
-            run.outputs.append(nbformat.v4.new_output(
+            run.add(nbformat.v4.new_output(
                 "error", ename=content["ename"], evalue=content["evalue"],
                 traceback=content["traceback"]))
-            run.texts.append(
-                f"ERROR: {content['ename']}: {content['evalue']}\n" + "\n".join(content["traceback"]))
 
 
 def _interrupt_kernel(notebook_path: str) -> Optional[str]:

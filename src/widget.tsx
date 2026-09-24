@@ -4,6 +4,7 @@ import { JupyterFrontEnd } from '@jupyterlab/application';
 import { IFileBrowserFactory } from '@jupyterlab/filebrowser';
 import { NotebookPanel } from '@jupyterlab/notebook';
 import { requestAPI } from './handler';
+import { AgentWriteTracker, reloadOpenDocument } from './reload';
 import ReactMarkdown from 'react-markdown';
 import { Send, RotateCw, Trash2, Square, Circle, CheckCircle2, ArrowRight } from 'lucide-react';
 
@@ -184,6 +185,44 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
     setMessages(prev => [...prev, systemMessage]);
   };
 
+  // Reload an open notebook tab once an agent tool that wrote it returns, so the
+  // tab's next save can't write a stale copy over the agent's cells and outputs
+  // (gh #160). The tracker outlives one stream: an interrupt can split a tool call
+  // (send stream) from its result (resume stream).
+  const writeTracker = useRef(new AgentWriteTracker());
+  const reloadAgentWrite = async (path: string) => {
+    const { skippedDirty } = await reloadOpenDocument(shell, path);
+    if (skippedDirty > 0) {
+      addSystemMessage(
+        `The agent changed ${path}, but its open tab has unsaved changes, so it was ` +
+          "not reloaded. Saving that tab would overwrite the agent's version. To see " +
+          "the agent's version, use File > Reload Notebook from Disk (this discards " +
+          'the unsaved changes).'
+      );
+    }
+  };
+  const syncAgentWrites = (data: any) => {
+    const tracker = writeTracker.current;
+    if (Array.isArray(data.tool_calls)) {
+      tracker.noteCalls(data.tool_calls);
+    }
+    if (data.tool_result !== undefined) {
+      const path = tracker.takeResult(data.id);
+      if (path) {
+        void reloadAgentWrite(path);
+      }
+    }
+    // A finished turn (not one paused on an interrupt, whose pending call may still
+    // run after the resume) reloads anything whose result frame never arrived.
+    const ended =
+      (data.status === 'complete' && data.outcome !== 'interrupted') ||
+      data.status === 'error' ||
+      data.status === 'cancelled';
+    if (ended) {
+      tracker.takeAll().forEach(path => void reloadAgentWrite(path));
+    }
+  };
+
   const getXSRFToken = (): string => {
     const matches = document.cookie.match('\\b_xsrf=([^;]*)\\b');
     return matches ? matches[1] : '';
@@ -353,6 +392,7 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
             try {
               const data = JSON.parse(line.slice(6));
               console.log('Received SSE data:', data);
+              syncAgentWrites(data);
 
               if (data.status === 'streaming') {
                 // Handle tool calls
@@ -548,6 +588,7 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
             try {
               const data = JSON.parse(line.slice(6));
               console.log('Resume SSE data:', data);
+              syncAgentWrites(data);
 
               if (data.status === 'streaming') {
                 if (data.tool_calls) {

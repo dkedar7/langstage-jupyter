@@ -1660,3 +1660,155 @@ def test_ask_returns_zero_for_keyless_demo_agent(monkeypatch):
     monkeypatch.setenv("LANGSTAGE_AGENT_SPEC", DEMO_AGENT_SPEC)
     monkeypatch.setenv("DEEPAGENT_AGENT_SPEC", DEMO_AGENT_SPEC)
     assert ask("hello", thread_id="ask-unit") == 0
+
+
+# ── Wave 3: launcher argument scanning (gh #115, #135, #138, #129, #155) ──────
+
+
+class TestValuelessLauncherFlags:
+    """gh #115: a bare `--ask` / `-a` (or one followed by another flag) used to leak into
+    the `jupyter lab` passthrough or silently eat the next flag as its value."""
+
+    @pytest.mark.parametrize("argv", [
+        ["--demo", "--ask"],               # trailing, no prompt
+        ["--demo", "--ask", "--no-browser"],  # would eat --no-browser as the prompt
+        ["--ask", "--demo"],               # would eat --demo (an unset "$MSG")
+    ])
+    def test_ask_without_a_prompt_is_a_launcher_error(self, monkeypatch, capsys, argv):
+        ran = []
+        monkeypatch.setattr("langstage_jupyter.launcher.subprocess.run",
+                            lambda *a, **k: ran.append(a))
+        monkeypatch.setattr("langstage_jupyter.launcher.ask", lambda *a, **k: ran.append(a) or 0)
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter"] + argv)
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 1
+        assert not ran, "a prompt-less --ask ran a turn or booted a server"
+        assert "--ask" in capsys.readouterr().err
+
+    @pytest.mark.parametrize("argv", [["-a"], ["--agent"], ["-a", "--no-browser"],
+                                      ["--agent", "--demo"]])
+    def test_agent_flag_without_a_spec_is_a_launcher_error(self, monkeypatch, capsys, argv):
+        ran = []
+        monkeypatch.setattr("langstage_jupyter.launcher.subprocess.run",
+                            lambda *a, **k: ran.append(a))
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter"] + argv)
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 1
+        assert not ran
+        assert "-a/--agent" in capsys.readouterr().err
+
+    def test_equals_form_still_allows_a_dash_leading_prompt(self):
+        prompt, rest = _extract_ask(["--ask=-5 degrees?", "--no-browser"])
+        assert prompt == "-5 degrees?" and rest == ["--no-browser"]
+
+    def test_quoted_empty_prompt_is_still_a_prompt(self):
+        prompt, rest = _extract_ask(["--ask", "", "--no-browser"])
+        assert prompt == "" and rest == ["--no-browser"]
+
+
+def test_short_agent_flag_with_equals_is_honored():
+    # gh #135: `-a=SPEC` leaked to jupyter ("Unrecognized alias: 'a'") and the launcher
+    # ran the DEFAULT agent, so --serve-check reported a false green.
+    spec, demo, rest = extract_agent_args(["-a=pkg.mod:g", "--no-browser"])
+    assert spec == "pkg.mod:g"
+    assert rest == ["--no-browser"]
+
+
+class TestPortPinning:
+    """The URL the launcher publishes must be the port the server binds."""
+
+    def _run_main(self, argv, monkeypatch):
+        calls = {}
+
+        def fake_run(cmd, env=None):
+            calls["cmd"] = cmd
+            calls["url"] = (env or {}).get("LANGSTAGE_JUPYTER_SERVER_URL")
+            return MagicMock(returncode=0)
+
+        monkeypatch.setattr("langstage_jupyter.launcher.subprocess.run", fake_run)
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter"] + argv)
+        with pytest.raises(SystemExit):
+            main()
+        return calls
+
+    @staticmethod
+    def _port_values(cmd):
+        names = ("--port", "--ServerApp.port")
+        n = 0
+        for i, a in enumerate(cmd):
+            if a in names:
+                n += 1
+            elif any(a.startswith(name + "=") for name in names):
+                n += 1
+        return n
+
+    @pytest.mark.parametrize("argv", [["--ServerApp.port=18955"],
+                                      ["--ServerApp.port", "18955"]])
+    def test_serverapp_port_alias_is_detected(self, monkeypatch, argv):
+        # gh #138: the alias wasn't detected, so the launcher injected its own --port too
+        # and jupyter aborted "port only accepts one value, got 2".
+        calls = self._run_main(argv + ["--no-browser"], monkeypatch)
+        assert self._port_values(calls["cmd"]) == 1
+        assert calls["url"] == "http://localhost:18955"
+
+    @pytest.mark.parametrize("argv", [["--port", "18961"], ["--port=18961"],
+                                      ["--ServerApp.port=18961"], []])
+    def test_port_retries_disabled_so_the_published_url_stays_true(self, monkeypatch, argv):
+        # gh #129: jupyter's port_retries (default 50) silently relocated a busy port,
+        # leaving LANGSTAGE_JUPYTER_SERVER_URL pointing at the old one.
+        calls = self._run_main(argv + ["--no-browser"], monkeypatch)
+        assert "--ServerApp.port_retries=0" in calls["cmd"]
+
+    def test_a_user_set_port_retries_is_respected(self, monkeypatch):
+        calls = self._run_main(["--port", "18962", "--ServerApp.port_retries=5"], monkeypatch)
+        assert "--ServerApp.port_retries=0" not in calls["cmd"]
+        assert calls["cmd"].count("--ServerApp.port_retries=5") == 1
+
+    @pytest.mark.parametrize("argv", [["--port", "0"], ["--port=0"],
+                                      ["--ServerApp.port=0"], ["--port", "70000"]])
+    def test_a_port_the_launcher_cannot_publish_is_rejected(self, monkeypatch, capsys, argv):
+        # gh #155: `--port 0` was read as "no port", so the launcher advertised :8888
+        # while the server bound a random port.
+        ran = []
+        monkeypatch.setattr("langstage_jupyter.launcher.subprocess.run",
+                            lambda *a, **k: ran.append(a))
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter"] + argv)
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 1
+        assert not ran
+        assert "invalid --port value" in capsys.readouterr().out
+
+
+class TestCheckConnectionUrlShape:
+    """gh #149: a scheme-less server URL raised a raw ValueError out of urllib."""
+
+    @pytest.mark.parametrize("url", ["localhost", "myserver.example.com", "8888",
+                                     "//localhost:8888", "localhost:8888"])
+    def test_scheme_less_url_is_a_clean_fail(self, monkeypatch, capsys, url):
+        monkeypatch.setenv("LANGSTAGE_JUPYTER_SERVER_URL", url)
+        monkeypatch.setenv("LANGSTAGE_JUPYTER_TOKEN", "tok")
+        assert check_connection() == 1
+        out = capsys.readouterr().out
+        assert out.startswith("[fail]") and "http://" in out
+
+
+def test_plain_launch_banner_survives_a_cp1252_console(monkeypatch):
+    # gh #157 (fixed in 0.6.31 via safe_print): the "Agent spec:" echo must not crash
+    # a cp1252 console before JupyterLab starts.
+    import io
+    import sys as _sys
+
+    buf = io.BytesIO()
+    monkeypatch.setattr(_sys, "stdout", io.TextIOWrapper(buf, encoding="cp1252"))
+    monkeypatch.setattr("langstage_jupyter.launcher.subprocess.run",
+                        lambda *a, **k: MagicMock(returncode=0))
+    monkeypatch.setattr("sys.argv", ["langstage-jupyter", "-a",
+                                     r"C:\Users\Даша\my_agent.py:graph", "--no-browser"])
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 0
+    _sys.stdout.flush()
+    assert b"Agent spec:" in buf.getvalue()
