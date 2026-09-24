@@ -11,7 +11,8 @@ from unittest.mock import patch
 
 import pytest
 
-from langstage_jupyter.launcher import _print, main
+from langstage_core.console import safe_print as _print  # the launcher's printer (core, since 1.0.36)
+from langstage_jupyter.launcher import main
 
 
 class _Cp1252:

@@ -46,15 +46,39 @@ class TestAgentSpecParsing:
         assert wrapper.agent_module_path == "my_module"
         assert wrapper.agent_variable_name == "my_agent"
 
-    @patch('langstage_jupyter.agent_wrapper.config.AGENT_SPEC', 'invalid_format')
+    @patch('langstage_jupyter.agent_wrapper.config.AGENT_SPEC', 'my_agent.py')
     @patch('langstage_jupyter.agent_wrapper.config.AGENT_MODULE', 'default.agent')
     @patch('langstage_jupyter.agent_wrapper.config.AGENT_VARIABLE', None)
-    @patch('langstage_jupyter.agent_wrapper.AgentWrapper._load_agent')
-    def test_falls_back_on_invalid_spec(self, mock_load):
-        """Should fall back to defaults when AGENT_SPEC format is invalid."""
-        wrapper = AgentWrapper()
-        assert wrapper.agent_module_path == "default.agent"
-        assert wrapper.agent_variable_name is None
+    def test_colon_less_spec_is_an_error_not_a_default_fallback(self):
+        """gh #151: a colon-less spec must not silently load the default agent.
+
+        The old local split(':') printed a warning and fell back to AGENT_MODULE (the
+        bundled default), so a typo ran a different agent than asked. Now core's
+        parse_agent_spec rejects it: nothing loads, and the error is kept for /health.
+        """
+        with patch('langstage_jupyter.agent_wrapper.load_agent_spec') as load:
+            wrapper = AgentWrapper()
+        load.assert_not_called()  # in particular, never 'default.agent:...'
+        assert wrapper.agent is None
+        assert wrapper.agent_module_path is None
+        assert "my_agent.py:graph" in wrapper.load_error  # core's hint
+        # A reload keeps refusing rather than falling back.
+        with patch('langstage_jupyter.agent_wrapper.load_agent_spec') as load:
+            wrapper.reload_agent()
+        load.assert_not_called()
+        assert wrapper.agent is None
+
+    @pytest.mark.parametrize("spec", ["my_agent.py", "pkg.mod", "agent.py:", ":graph"])
+    def test_resolve_agent_target_raises_for_a_malformed_spec(self, spec):
+        """gh #151: the shared resolver (--verify / --ask / --serve-check) raises."""
+        with pytest.raises(ValueError, match="Invalid agent spec"):
+            AgentWrapper.resolve_agent_target(spec, "default.agent", None)
+
+    def test_resolve_agent_target_keeps_a_windows_drive_path(self):
+        """Core splits on the LAST ':' and strips, so a drive-letter path survives."""
+        assert AgentWrapper.resolve_agent_target(
+            "  C:\\x\\agent.py:graph ", "default.agent", None
+        ) == ("C:\\x\\agent.py", "graph")
 
 
 class TestContextAppending:

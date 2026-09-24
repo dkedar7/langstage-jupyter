@@ -18,6 +18,7 @@ load_dotenv(find_dotenv(usecwd=True))
 # Import configuration.
 from . import config
 from langstage_core import apply_workspace, load_agent_spec, workspace_root
+from langstage_core.host import parse_agent_spec
 
 
 class AgentWrapper:
@@ -41,6 +42,8 @@ class AgentWrapper:
                                 Defaults to None (will try 'agent' then 'graph').
         """
         self.agent = None
+        # Why the agent is not loaded, for /health (None when it loaded, or before a load).
+        self.load_error: Optional[str] = None
 
         # Resolve WHICH agent to load — an explicit spec beats module+variable beats the
         # config defaults. Factored into resolve_agent_target() so the launcher's --verify
@@ -48,13 +51,22 @@ class AgentWrapper:
         # does, instead of keying off agent_spec alone and silently preflighting the bundled
         # default whenever the agent was selected via LANGSTAGE_AGENT_MODULE +
         # LANGSTAGE_AGENT_VARIABLE (gh #90).
-        self.agent_module_path, self.agent_variable_name = self.resolve_agent_target(
-            config.AGENT_SPEC,
-            config.AGENT_MODULE,
-            config.AGENT_VARIABLE,
-            agent_module_path,
-            agent_variable_name,
-        )
+        # A malformed spec (e.g. colon-less 'my_agent.py') is an error, never a silent
+        # fallback to the bundled default agent (gh #151). The server keeps booting with no
+        # agent, and /health reports the spec error instead of a different agent's status.
+        self._spec_error: Optional[str] = None
+        try:
+            self.agent_module_path, self.agent_variable_name = self.resolve_agent_target(
+                config.AGENT_SPEC,
+                config.AGENT_MODULE,
+                config.AGENT_VARIABLE,
+                agent_module_path,
+                agent_variable_name,
+            )
+        except ValueError as e:
+            self._spec_error = str(e)
+            self.agent_module_path, self.agent_variable_name = None, None
+            print(f"Error: {e}")
 
         # Whether the operator pinned an explicit workspace root — via
         # LANGSTAGE_WORKSPACE_ROOT / legacy DEEPAGENT_WORKSPACE_ROOT, or
@@ -86,6 +98,9 @@ class AgentWrapper:
         1. an explicit ``agent_spec`` (``"module_or_file:variable"``) wins;
         2. otherwise the module + variable, with explicit call params overriding config.
 
+        Raises ``ValueError`` (core's ``parse_agent_spec`` message) for a malformed
+        ``agent_spec``; it never falls back to the module + variable or the default (gh #151).
+
         ``AgentWrapper.__init__`` calls this with the frozen ``config.*`` constants (the
         runtime's source); the launcher's ``--verify`` calls it with a live
         ``LabConfig.resolve()`` — in a real launch the two see the same environment, so
@@ -93,15 +108,14 @@ class AgentWrapper:
         ``--verify`` can drive it off live config without re-importing the frozen constants.
         """
         if agent_spec:
-            # Parse "module_or_file:variable" — split on the FIRST ':' so
-            # load_agent_from_target reassembles the exact original spec (its
-            # rpartition then splits a Windows 'C:\...:var' path on the LAST ':').
-            parts = agent_spec.split(':', 1)
-            if len(parts) == 2:
-                print(f"Using agent from environment: {parts[0]}:{parts[1]}")
-                return parts[0], parts[1]
-            print(f"Warning: DEEPAGENT_AGENT_SPEC format should be 'module:variable', got: {agent_spec}")
-            print("Falling back to parameters or defaults")
+            # langstage-core's parser, the one load_agent_spec uses: strips whitespace,
+            # splits on the LAST ':' (so a Windows 'C:\...:var' path survives), and
+            # raises ValueError for a colon-less or otherwise malformed spec. The old local
+            # split(':') printed a warning and silently fell back to the default agent, so a
+            # typo'd -a / LANGSTAGE_AGENT_SPEC ran a different agent than asked (gh #151).
+            module_path, variable = parse_agent_spec(agent_spec)
+            print(f"Using agent from environment: {module_path}:{variable}")
+            return module_path, variable
         return (agent_module_path or agent_module,
                 agent_variable_name or agent_variable)
 
@@ -141,6 +155,12 @@ class AgentWrapper:
         """
         # Invalidate any cached AG-UI wrapper so it rebuilds around the fresh graph.
         self._agui_agent = None
+        spec_error = getattr(self, "_spec_error", None)
+        if spec_error is not None:
+            # The configured spec is malformed: load nothing rather than a fallback (gh #151).
+            self.agent, self.load_error = None, spec_error
+            return
+        self.load_error = None
         try:
             self.agent, loaded_spec = self.load_agent_from_target(
                 self.agent_module_path, self.agent_variable_name
@@ -150,13 +170,13 @@ class AgentWrapper:
             print(f"Warning: Could not load agent '{self.agent_module_path}': {e}")
             if config.AGENT_SPEC:
                 print(f"Note: DEEPAGENT_AGENT_SPEC is set to: {config.AGENT_SPEC}")
-            self.agent = None
+            self.agent, self.load_error = None, str(e)
         except Exception as e:
             print(f"Error loading agent: {e}")
             if config.DEBUG:
                 import traceback
                 traceback.print_exc()
-            self.agent = None
+            self.agent, self.load_error = None, str(e)
 
     def reload_agent(self):
         """Reload the agent module (useful for development)."""
@@ -165,11 +185,10 @@ class AgentWrapper:
         # load re-imports it. Match exactly or on a dotted-submodule prefix — a
         # bare substring check also nuked unrelated modules (the module path
         # 'langstage_jupyter.agent' is a substring of '...agent_wrapper'). (gh #36)
-        path = self.agent_module_path
+        path = self.agent_module_path or ""  # None when the spec was malformed (gh #151)
         modules_to_remove = [
             mod_name for mod_name in sys.modules
-            if (mod_name == path
-                or mod_name.startswith(path + ".")
+            if ((path and (mod_name == path or mod_name.startswith(path + ".")))
                 or mod_name.startswith('custom_agent_'))
         ]
         for mod_name in modules_to_remove:

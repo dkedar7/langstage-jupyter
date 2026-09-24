@@ -56,39 +56,6 @@ def _mask_secret(value: Any) -> str:
     return "****" + s[-4:]
 
 
-# The base ``HostConfig.describe()`` footer for the no-file case. We match on this
-# (via a stable prefix, below) to rewrite it when a file WAS found but couldn't be
-# parsed — see ``LabConfig.describe`` and gh #86.
-_ABSENT_TOML_FOOTER_PREFIX = "  TOML: no langstage.toml"
-
-
-def _malformed_config_paths(toml_start: Optional[Path] = None) -> list[Path]:
-    """Config files that exist on the resolved search path but failed to parse.
-
-    langstage-core records every path whose TOML parse raised in the module-level
-    ``_malformed_toml`` set (gh langstage-hermes #61/#42) and emits the one-line
-    ``note: ignoring malformed config <path> ...`` on stderr from there. That set is
-    process-global and accumulates across every ``resolve()`` in the process, so we
-    intersect it with the files actually on THIS resolve's search path — the nearest
-    project ``langstage.toml`` / legacy ``deepagents.toml`` and the global config — so a
-    stale entry from an unrelated resolve elsewhere in the process can't leak in. Returns
-    the found-but-malformed paths (usually zero or one), in global-then-project order.
-    """
-    from langstage_core.host import config as _core
-
-    malformed = getattr(_core, "_malformed_toml", set())
-    if not malformed:
-        return []
-    found: list[Path] = []
-    gpath = _core._global_toml_path()
-    if gpath.is_file() and str(gpath) in malformed:
-        found.append(gpath)
-    ppath = _core._find_project_toml(toml_start)
-    if ppath is not None and str(ppath) in malformed:
-        found.append(ppath)
-    return found
-
-
 @dataclass
 class LabConfig(HostConfig):
     """langstage-jupyter's view of the shared config.
@@ -146,24 +113,6 @@ class LabConfig(HostConfig):
         "execute_timeout": "jupyter.execute_timeout",
     }
 
-    @classmethod
-    def resolve(cls, *, toml_start: Optional[Path] = None, **kwargs: Any) -> "LabConfig":
-        """Resolve config, additionally recording any found-but-malformed TOML.
-
-        Delegates to ``HostConfig.resolve`` and then, while ``toml_start`` is still in
-        hand, stashes the config files that exist on this resolve's search path but
-        failed to parse (``_malformed_config_paths``). ``describe()`` reads that back so
-        the ``--show-config`` footer can tell a present-but-unparseable ``langstage.toml``
-        apart from a genuinely absent one (gh #86) — the base footer keys purely off the
-        SUCCESSFULLY-parsed paths, so a malformed file collapses into "not found".
-        """
-        obj = super().resolve(toml_start=toml_start, **kwargs)
-        use_toml = kwargs.get("use_toml", True)
-        obj._malformed_toml_paths = (  # type: ignore[attr-defined]
-            _malformed_config_paths(toml_start) if use_toml else []
-        )
-        return obj
-
     # Fields whose resolved value is a secret and must never be printed verbatim by
     # the config diagnostics. ``--show-config`` may SHOW jupyter_token (so the manual-
     # config flow is verifiable, gh #105), but only masked — see ``_mask_secret``.
@@ -194,70 +143,27 @@ class LabConfig(HostConfig):
             for name, value in saved.items():
                 setattr(self, name, value)
 
+    # A present-but-malformed langstage.toml is reported by langstage-core itself since
+    # 1.0.36 (the describe() footer says MALFORMED, config_dict()["toml"] carries
+    # found/malformed/malformed_files), so the local footer rewrite + JSON override that
+    # used to live here (gh #86, #88) are gone. These overrides only mask secrets.
     def describe(
         self,
         omit_keys: Optional[list] = None,
         configurable: Optional[dict] = None,
     ) -> str:
-        """Base ``describe`` plus a truthful footer for a malformed ``langstage.toml``.
-
-        The base ``HostConfig.describe`` footer says ``TOML: no langstage.toml ... found``
-        whenever no file parsed successfully — which lumps a present-but-unparseable file
-        in with a genuinely absent one, directly contradicting the ``note: ignoring
-        malformed config <path> ...`` this same command already prints on stderr (gh #86).
-        When a file WAS found on the search path but rejected as malformed, rewrite that
-        footer to say so, pointing at the stderr note instead of at "not found". A valid
-        file still shows its ``TOML read from:`` footer and genuine absence still shows
-        ``no ... found`` — both untouched.
-        """
+        """Base ``describe`` with secret fields masked (gh #105)."""
         with self._secrets_masked_for_render(omit_keys):
-            text = super().describe(omit_keys=omit_keys, configurable=configurable)
-        malformed = getattr(self, "_malformed_toml_paths", [])
-        if not malformed:
-            return text
-        new_footer = (
-            "  TOML: found "
-            + ", ".join(str(p) for p in malformed)
-            + " but it is malformed (see the note above); using environment + defaults"
-        )
-        lines = text.split("\n")
-        for i, line in enumerate(lines):
-            # Only the no-file footer starts this way; a "TOML read from:" footer (some
-            # file parsed) is left alone, so a mix of a valid global + malformed project
-            # keeps crediting the file that DID load.
-            if line.startswith(_ABSENT_TOML_FOOTER_PREFIX):
-                lines[i] = new_footer
-                break
-        return "\n".join(lines)
+            return super().describe(omit_keys=omit_keys, configurable=configurable)
 
-    def config_dict(self, omit_keys: Optional[list] = None) -> dict:
-        """Base ``config_dict`` plus the malformed-``langstage.toml`` flag (gh #88 / #86).
-
-        ``config_dict()`` is langstage-core's machine-readable twin of ``describe()`` —
-        the JSON ``--show-config --json`` renders. Its base ``toml`` block reports only
-        ``{found, path}``, keyed (like the ``describe()`` footer) off the SUCCESSFULLY
-        parsed paths, so a present-but-unparseable file collapses into ``found: false,
-        path: null`` — the exact same "looks absent" lie #86 fixed for the human footer.
-        Core's ``config_dict`` docstring anticipates this: "a host that tracks more …
-        extends the ``toml`` block in its own override."
-
-        This mirrors :meth:`describe`'s footer rewrite as data: it always adds a
-        ``malformed`` boolean, and — only when NO valid file parsed (the same condition
-        under which ``describe`` rewrites the absent footer) — flips ``found``/``path`` to
-        name the found-but-malformed file, so the JSON agrees with the human table and
-        the stderr ``note: ignoring malformed config …``. A mix of a valid global +
-        malformed project keeps crediting the file that DID load (``found``/``path``
-        untouched) while still surfacing ``malformed: true`` as data.
-        """
+    def config_dict(
+        self,
+        omit_keys: Optional[list] = None,
+        configurable: Optional[dict] = None,
+    ) -> dict:
+        """Base ``config_dict`` with secret fields masked (gh #105)."""
         with self._secrets_masked_for_render(omit_keys):
-            data = super().config_dict(omit_keys=omit_keys)
-        malformed = getattr(self, "_malformed_toml_paths", [])
-        toml_block = data.get("toml", {})
-        toml_block["malformed"] = bool(malformed)
-        if malformed and not toml_block.get("found"):
-            toml_block["found"] = True
-            toml_block["path"] = str(malformed[-1])
-        return data
+            return super().config_dict(omit_keys=omit_keys, configurable=configurable)
 
 
 def is_bundled_default(cfg: "LabConfig") -> bool:

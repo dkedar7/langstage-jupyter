@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.6.31 - 2026-09-24
+
+### Fixed
+- **A malformed agent spec is an error, not a silent switch to the default agent
+  (gh #151).** The local `split(':')` parser printed a warning for a colon-less spec such
+  as `-a my_agent.py` and then loaded the bundled default agent, so the sidebar,
+  `--verify`, `--ask` and `--serve-check` all ran a different agent than the one asked
+  for. Specs now go through langstage-core's `parse_agent_spec`: `-a` is rejected up front
+  with core's message (including the `'my_agent.py:graph'` hint) and exit 1; a malformed
+  `LANGSTAGE_AGENT_SPEC` / `[agent] spec` gives a `[fail]` from `--verify`, `--ask` and
+  `--serve-check`, and `/health` reports the spec error instead of loading anything.
+- **The missing-key preflight works for a bare model name (gh #136).** `/health` and
+  `--verify` / `--ask` read the provider only from a `provider:` prefix, so
+  `LANGSTAGE_MODEL_NAME=claude-sonnet-4-5` without `ANTHROPIC_API_KEY` showed a green light
+  and then failed the first turn with a raw provider error. The provider is now inferred
+  with the same parser `init_chat_model` uses (`claude-*` -> Anthropic, `gpt-*` / `o3*`
+  -> OpenAI, ...).
+- **A quoted TOML boolean is coerced (gh #133).** `virtual_mode = "false"` in
+  `langstage.toml` read as truthy and left the sandbox on. langstage-core 1.0.36 coerces
+  quoted booleans with the same rules as the env var; an unrecognized value keeps the
+  default with a note.
+- **The HITL buttons follow the interrupt's allowed decisions.** The sidebar read
+  `review_configs[0].allowed_decisions`, which the standard HumanInterrupt list shape
+  doesn't have. It now reads core's top-level `allowed_decisions`.
+
+### Changed
+- Requires `langstage-core>=1.0.36`. Local copies of logic that now lives in core are
+  removed: the spec parser (above), the malformed-`langstage.toml` footer and
+  `config_dict` overrides (core reports a present-but-malformed file as `MALFORMED` in
+  `--show-config` and as `malformed` / `malformed_files` in `--show-config --json`), and
+  the launcher's `_print` helper (now `langstage_core.console.safe_print`, the same
+  escaping, adopted from #141).
+- A relative `[agent] spec` in `langstage.toml` now resolves against that file's
+  directory rather than the cwd (a core 1.0.36 change), and `--show-config` shows the
+  absolute path.
+
 ## 0.6.30 - 2026-09-23
 
 ### Security
