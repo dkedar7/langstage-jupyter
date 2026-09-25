@@ -22,6 +22,8 @@ import sys
 import socket
 import secrets
 import subprocess
+from pathlib import Path
+from typing import Optional
 
 # Console-safe print for every verdict that interpolates text this launcher did not
 # author (an agent's exception, a config value, a model reply): a character the console
@@ -44,27 +46,47 @@ def _package_version() -> str:
         return "0.0.0+local"
 
 
-def _labextension_version() -> str:
-    """Version of the bundled JupyterLab extension, from its ``package.json``.
+#: Where a source checkout (or an editable install) keeps the built labextension.
+_PACKAGE_LABEXTENSION_DIR = Path(__file__).resolve().parent / "labextension"
+
+#: The labextension's directory name under ``share/jupyter/labextensions``.
+_LABEXTENSION_NAME = "langstage-jupyter"
+
+
+def _labextension_version() -> Optional[str]:
+    """Version of the JupyterLab extension JupyterLab will load, from its ``package.json``.
 
     The labextension is a separate JS bundle stamped with its own version at build
     time (hatch-nodejs-version, from the same ``package.json`` as the Python
     package). #82 showed the two can DRIFT — a stale reused bundle ships an old JS
     version while ``pip``/``--version`` report the new one — which is exactly why a
     machine-readable ``--show-config`` reports both, so a CI consumer can assert
-    they agree. Read from the bundled manifest shipped inside the package
-    (``langstage_jupyter/labextension/package.json``); fall back to the Python
-    package version when the bundle isn't present (an unbuilt source checkout),
-    which the build-time guard (``hatch_build.py``) pins equal at release anyway.
+    they agree.
+
+    A wheel installs the bundle under ``<prefix>/share/jupyter/labextensions/``, not
+    inside the package, so this used to find nothing on every pip install and report the
+    Python version instead: the two fields could never disagree (gh #131). So it reads
+    the first ``labextensions`` dir on the Jupyter data path that has the bundle (the one
+    JupyterLab loads, first match wins), then the in-package copy of a source checkout.
+    With no bundle anywhere it returns ``None`` (JSON ``null``), never the Python version.
     """
     import json as _json
-    from pathlib import Path
 
-    manifest = Path(__file__).resolve().parent / "labextension" / "package.json"
+    candidates = []
     try:
-        return _json.loads(manifest.read_text(encoding="utf-8"))["version"]
-    except (OSError, ValueError, KeyError):  # missing/corrupt bundle manifest
-        return _package_version()
+        from jupyter_core.paths import jupyter_path
+
+        candidates = [Path(d) / _LABEXTENSION_NAME for d in jupyter_path("labextensions")]
+    except Exception:  # noqa: BLE001 - jupyter_core missing/odd: fall back to the package
+        pass
+    candidates.append(_PACKAGE_LABEXTENSION_DIR)
+    for directory in candidates:
+        try:
+            manifest = directory / "package.json"
+            return _json.loads(manifest.read_text(encoding="utf-8"))["version"]
+        except (OSError, ValueError, KeyError, TypeError):  # absent/corrupt manifest
+            continue
+    return None
 
 
 _LAUNCHER_HELP = """\
@@ -656,7 +678,7 @@ def ask(prompt, *, thread_id="ask", turn_timeout=120.0):
         # operator's concern. Gives the missing-key case a clean actionable verdict on stderr
         # instead of a raw provider TypeError mid-turn (gh #60/#90, matching /health via
         # config.is_bundled_default so they can't drift).
-        if config.is_bundled_default(cfg):
+        if config.runs_bundled_default(cfg):  # incl. the default selected by name (gh #112)
             missing = handlers._missing_provider_key(str(cfg.model_name or "").strip())
             if missing:
                 print(
@@ -666,6 +688,8 @@ def ask(prompt, *, thread_id="ask", turn_timeout=120.0):
                     file=sys.stderr,
                 )
                 return 1
+
+        _apply_agent_workspace(cfg)  # before the import, like the sidebar runtime (gh #148)
 
         # Build the SAME agent object the sidebar runs, through AgentWrapper's own loader
         # (strict module:variable spec, same implicit agent->graph fallback). A load failure is
@@ -708,6 +732,20 @@ def ask(prompt, *, thread_id="ask", turn_timeout=120.0):
     else:
         safe_print(f"[ ok ] one turn completed cleanly (agent {loaded_spec!r})", file=sys.stderr)
     return _ask_exit_code(result.outcome)
+
+
+def _apply_agent_workspace(cfg):
+    """Publish the agent's workspace root before a preflight imports the agent (gh #148).
+
+    The same root the sidebar runtime applies before its first load: the pinned
+    ``workspace_root`` if one is set, else the directory ``jupyter lab`` would serve (this
+    process's cwd). A custom agent that reads ``LANGSTAGE_WORKSPACE_ROOT`` at import, as the
+    README shows, then sees the same value under ``--verify`` / ``--ask`` as in the sidebar.
+    """
+    from langstage_core import apply_workspace
+
+    pinned = cfg.sources.get("workspace_root", "default") != "default"
+    apply_workspace(cfg.workspace_root if pinned else os.getcwd())
 
 
 def _extract_ask(args):
@@ -760,6 +798,32 @@ def _find_arg_value(args, names):
     return None
 
 
+#: The spellings `jupyter lab` accepts for its serving root (gh #150).
+ROOT_DIR_ARG_NAMES = ("--notebook-dir", "--ServerApp.root_dir", "--ServerApp.notebook_dir")
+
+
+def _pinned_workspace_root() -> Optional[Path]:
+    """The pinned workspace root the launched server will use, or ``None`` if unpinned.
+
+    Resolved like the server resolves it: env, ``langstage.toml``, and the launch dir's
+    ``.env``, which the server extension loads (without overriding real env vars) before
+    reading its config. Reading only os.environ here would miss a ``.env`` pin that the
+    server then honors, and split the roots again (gh #150).
+    """
+    from dotenv import dotenv_values, find_dotenv
+
+    from langstage_jupyter.config import LabConfig
+
+    dotenv_path = find_dotenv(usecwd=True)
+    from_dotenv = {}
+    if dotenv_path:
+        from_dotenv = {k: v for k, v in dotenv_values(dotenv_path).items() if v is not None}
+    cfg = LabConfig.resolve(env={**from_dotenv, **os.environ})
+    if cfg.sources.get("workspace_root", "default") == "default":
+        return None
+    return Path(cfg.workspace_root).expanduser().resolve()
+
+
 def main():
     """Main launcher function."""
     # Parse command line arguments
@@ -796,6 +860,8 @@ def main():
         sys.exit(1)
     if demo:
         agent_spec = DEMO_AGENT_SPEC
+    # Which launcher flag chose the agent, for --show-config's source column (gh #121).
+    agent_flag = "--demo" if demo else ("-a/--agent" if agent_spec else None)
     if agent_spec:
         # Reject a malformed -a up front (colon-less 'my_agent.py', empty object name) with
         # core's own message, so --verify / --ask / --serve-check / the launch fail cleanly
@@ -807,18 +873,17 @@ def main():
         except ValueError as e:
             safe_print(f"ERROR: -a/--agent: {e}", file=sys.stderr)
             sys.exit(1)
-        # The sidebar extension resolves LANGSTAGE_AGENT_SPEC (env beats the
-        # built-in default; langstage.toml still works when nothing is set).
-        # The legacy name is set too so an older installed extension version
-        # keeps working with this launcher.
-        os.environ["LANGSTAGE_AGENT_SPEC"] = agent_spec
-        os.environ["DEEPAGENT_AGENT_SPEC"] = agent_spec
 
     # --show-config: print the resolved config (value, source, env var / TOML
     # key for each) and exit — now reflecting any -a/--demo parsed above.
     if "--show-config" in args:
         from langstage_jupyter.config import LabConfig
-        cfg = LabConfig.resolve()
+        # -a / --demo is a CLI override, credited to the flag. It used to be written into
+        # os.environ first, so --show-config (and --json) reported the agent as coming from
+        # env:LANGSTAGE_AGENT_SPEC, a variable the user never set (gh #121).
+        cfg = LabConfig.resolve(overrides={"agent_spec": agent_spec})
+        if agent_flag:
+            cfg.sources["agent_spec"] = f"cli:{agent_flag}"
         # Hide keys the LAUNCHER doesn't honor, so --show-config never advertises
         # an env var with a confident source that has no effect here:
         #   host/port  — JupyterLab binds localhost on the auto-detected/--port port (gh #30)
@@ -860,6 +925,15 @@ def main():
         safe_print(cfg.describe(omit_keys=omit))
         return
 
+    if agent_spec:
+        # Every other path hands the agent to code that reads the config (the sidebar
+        # extension in the jupyter subprocess, --verify/--ask/--serve-check here), so publish
+        # it as LANGSTAGE_AGENT_SPEC (env beats the built-in default; langstage.toml still
+        # works when nothing is set). The legacy name is set too so an older installed
+        # extension version keeps working with this launcher.
+        os.environ["LANGSTAGE_AGENT_SPEC"] = agent_spec
+        os.environ["DEEPAGENT_AGENT_SPEC"] = agent_spec
+
     # --verify: preflight the agent the extension WOULD run — resolve the spec the
     # same way, load it, and run ONE real turn through the shared langstage-core
     # primitive; exit 0 if it completed cleanly, non-zero otherwise. The extension's
@@ -900,7 +974,10 @@ def main():
         # ANTHROPIC_API_KEY for a keyless module+variable agent that never needed it — for
         # "the default agent" the user never configured (gh #90). The predicate lives in
         # config.is_bundled_default so --verify and /health can't drift (gh #94).
-        if config.is_bundled_default(cfg):
+        # runs_bundled_default also covers the default selected BY NAME
+        # (LANGSTAGE_AGENT_SPEC=langstage_jupyter.agent:agent, as .env.example suggests),
+        # which used to skip this and hit a raw provider TypeError (gh #112).
+        if config.runs_bundled_default(cfg):
             from langstage_jupyter import handlers
 
             missing = handlers._missing_provider_key(str(cfg.model_name or "").strip())
@@ -910,6 +987,10 @@ def main():
                     "agent's first turn would fail. Set it and re-run."
                 )
                 sys.exit(1)
+
+        # Publish the workspace root before the import, as the sidebar runtime does, so an
+        # agent reading LANGSTAGE_WORKSPACE_ROOT at import sees it here too (gh #148).
+        _apply_agent_workspace(cfg)
 
         # Build the SAME agent object the sidebar runs, through AgentWrapper's own loader
         # (same strict module:variable spec, same implicit agent→graph fallback), so the
@@ -1036,18 +1117,46 @@ def main():
     user_token = _find_user_token(args)
 
     # Resolve the auth token. Precedence: a user-pinned --IdentityProvider.token /
-    # --ServerApp.token (respected as-is and NOT re-injected — see below), then
-    # JUPYTER_TOKEN from the env, then a freshly generated secure token.
+    # --ServerApp.token (respected as-is and NOT re-injected — see below), then the
+    # documented LANGSTAGE_JUPYTER_TOKEN (legacy DEEPAGENT_JUPYTER_TOKEN, with core's
+    # one-time deprecation notice; or jupyter.token in langstage.toml), then Jupyter's own
+    # JUPYTER_TOKEN, then a freshly generated secure token. The launcher used to read only
+    # JUPYTER_TOKEN, so the token --show-config advertised was discarded (gh #139).
+    from langstage_jupyter.config import LabConfig
+
+    launch_cfg = LabConfig.resolve()
+    token_source = launch_cfg.sources.get("jupyter_token", "default")
     if user_token is not None:
         token = user_token
         print("Using user-specified token (--IdentityProvider.token/--ServerApp.token)")
+    elif token_source != "default" and str(launch_cfg.jupyter_token or ""):
+        token = str(launch_cfg.jupyter_token)
+        print(f"Using the Jupyter token from {token_source}")
+    elif os.getenv('JUPYTER_TOKEN'):
+        token = os.environ['JUPYTER_TOKEN']
+        print("Using existing JUPYTER_TOKEN from environment")
     else:
-        token = os.getenv('JUPYTER_TOKEN')
-        if not token:
-            token = generate_token()
-            print("Generated secure authentication token")
+        token = generate_token()
+        print("Generated secure authentication token")
+
+    # Serve the pinned workspace (gh #150). The notebook tools work through the contents
+    # API, so they always act on JupyterLab's serving root, while the agent's file tools
+    # use the pinned LANGSTAGE_WORKSPACE_ROOT. Launched from anywhere else (the README's
+    # "Agent Portability" recipe), the two toolsets wrote to different directories. An
+    # explicit --notebook-dir / --ServerApp.root_dir wins, with a warning if it differs.
+    serve_root_arg = None
+    pinned_root = _pinned_workspace_root()
+    if pinned_root is not None:
+        user_root = _find_arg_value(args, ROOT_DIR_ARG_NAMES)
+        if user_root is None:
+            serve_root_arg = f"--ServerApp.root_dir={pinned_root}"
+            safe_print(f"Serving the pinned workspace: {pinned_root}")
         else:
-            print("Using existing JUPYTER_TOKEN from environment")
+            from langstage_jupyter.config import workspace_serving_mismatch
+
+            message = workspace_serving_mismatch(user_root, pinned_root)
+            if message:
+                safe_print(message)
 
     # Determine server URL
     # Use localhost for security (only local connections)
@@ -1102,6 +1211,9 @@ def main():
     # f"--ServerApp.token={token}" above.
     if user_token is None:
         jupyter_args.append(f'--IdentityProvider.token={token}')
+
+    if serve_root_arg is not None:
+        jupyter_args.append(serve_root_arg)
 
     # Add any user-provided arguments
     jupyter_args.extend(args)

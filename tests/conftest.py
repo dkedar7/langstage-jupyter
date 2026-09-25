@@ -36,6 +36,26 @@ def _restore_workspace_root():
 
 
 @pytest.fixture(autouse=True)
+def _restore_launcher_env():
+    """Undo the env vars ``launcher.main()`` publishes for its child process.
+
+    ``main()`` writes ``LANGSTAGE_JUPYTER_TOKEN`` / ``_SERVER_URL`` / ``_AGENT_SPEC`` into
+    ``os.environ`` (a real launch is one process, so that's fine). Under pytest they leaked
+    into later tests, and since the launcher honors ``LANGSTAGE_JUPYTER_TOKEN`` (gh #139)
+    a leaked token would be picked up as the user's pinned one.
+    """
+    prefixes = ("LANGSTAGE_", "DEEPAGENT_")
+    saved = {k: v for k, v in os.environ.items() if k.startswith(prefixes) or k == "JUPYTER_TOKEN"}
+    try:
+        yield
+    finally:
+        for k in [k for k in os.environ if k.startswith(prefixes) or k == "JUPYTER_TOKEN"]:
+            if k not in saved:
+                del os.environ[k]
+        os.environ.update(saved)
+
+
+@pytest.fixture(autouse=True)
 def _reset_malformed_env_dedupe():
     """Clear the once-per-value malformed-numeric-env notice dedupe between tests.
 

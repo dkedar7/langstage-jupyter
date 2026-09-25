@@ -223,7 +223,12 @@ from deepagents.backends import FilesystemBackend
 from langgraph.checkpoint.memory import MemorySaver
 import os
 
-# The agent automatically discovers the workspace
+# The notebook tools (create_notebook, insert_code_cell, execute_cell, ...).
+# Your agent only gets them if you pass them in.
+from langstage_jupyter.notebook_tools import NOTEBOOK_TOOLS
+
+# langstage-jupyter sets this before it imports your agent: the pinned
+# workspace, else the directory JupyterLab serves.
 workspace = os.getenv('LANGSTAGE_WORKSPACE_ROOT', '.')
 
 # Create your custom agent
@@ -232,9 +237,12 @@ agent = create_deep_agent(
     model="anthropic:claude-sonnet-4-20250514",
     backend=FilesystemBackend(root_dir=workspace, virtual_mode=True),
     checkpointer=MemorySaver(),
-    tools=[],  # add your custom tools here, e.g. [my_tool, another_tool]
+    tools=[*NOTEBOOK_TOOLS],  # add your own tools too, e.g. [*NOTEBOOK_TOOLS, my_tool]
 )
 ```
+
+Leave out `NOTEBOOK_TOOLS` and the agent can still read and write files, but it can't
+create, edit or run notebook cells.
 
 ### Configuring the Extension to Use Your Agent
 
@@ -274,6 +282,14 @@ langstage run
 langstage-cli
 ```
 
+With a pinned `LANGSTAGE_WORKSPACE_ROOT`, `langstage-jupyter` serves that directory in
+JupyterLab (it passes `--ServerApp.root_dir`), so the file browser, the agent's file tools
+and its notebook tools all use the same directory. The notebook tools go through
+JupyterLab's contents API, so they always work in the directory JupyterLab serves. If you
+pass your own `--notebook-dir` / `--ServerApp.root_dir`, or run plain `jupyter lab`, and it
+differs from the pinned workspace, the launcher and the server log print a warning: file
+tools then use the workspace and notebook tools use the serving root.
+
 ## Environment Variables
 
 All configuration uses the `LANGSTAGE_` prefix (the pre-rename `DEEPAGENT_` names still resolve as deprecated fallbacks):
@@ -281,12 +297,15 @@ All configuration uses the `LANGSTAGE_` prefix (the pre-rename `DEEPAGENT_` name
 | Variable | Purpose | Default | When to Set |
 |----------|---------|---------|-------------|
 | `LANGSTAGE_AGENT_SPEC` | Custom agent location (`path:variable`) | Uses default agent | Optional: for custom agents |
-| `LANGSTAGE_WORKSPACE_ROOT` | Working directory for agent | JupyterLab root | Optional |
+| `LANGSTAGE_WORKSPACE_ROOT` | Working directory for agent (set before your agent is imported) | JupyterLab root | Optional |
 | `LANGSTAGE_JUPYTER_SERVER_URL` | Jupyter server URL | Auto-detected | Manual config only |
-| `LANGSTAGE_JUPYTER_TOKEN` | Jupyter auth token | Auto-generated | Manual config only |
+| `LANGSTAGE_JUPYTER_TOKEN` | Jupyter auth token | Auto-generated | Optional: pins the launcher's token |
+| `LANGSTAGE_MODEL_TEMPERATURE` | Default agent's sampling temperature | `0.0` | Optional |
 | `ANTHROPIC_API_KEY` | Anthropic API key | None | Required for default agent |
 
-When using the `langstage-jupyter` launcher, `LANGSTAGE_JUPYTER_SERVER_URL` and `LANGSTAGE_JUPYTER_TOKEN` are automatically configured and don't need to be set.
+When using the `langstage-jupyter` launcher, `LANGSTAGE_JUPYTER_SERVER_URL` and `LANGSTAGE_JUPYTER_TOKEN` are automatically configured and don't need to be set. To pin the launcher's token, set `LANGSTAGE_JUPYTER_TOKEN` (or `jupyter.token` in `langstage.toml`). The launcher picks the token in this order: `--IdentityProvider.token`, then `LANGSTAGE_JUPYTER_TOKEN` (legacy `DEEPAGENT_JUPYTER_TOKEN`, with a deprecation notice), then `JUPYTER_TOKEN`, then a generated one.
+
+`LANGSTAGE_MODEL_TEMPERATURE` must be a finite number from 0 up to the provider's maximum (1 for Anthropic, 2 for OpenAI and Gemini). Any other value is ignored with a `note:` and the default `0.0` is used.
 
 See [.env.example](https://github.com/dkedar7/langstage-jupyter/blob/main/.env.example) for a complete configuration template.
 

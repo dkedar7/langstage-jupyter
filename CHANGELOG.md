@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.6.33 - 2026-09-25
+
+### Fixed
+- **The missing-key preflight covers the default agent selected by name (gh #112).**
+  `LANGSTAGE_AGENT_SPEC=langstage_jupyter.agent:agent` (the example in `.env.example`),
+  `-a langstage_jupyter.agent:agent` or `LANGSTAGE_AGENT_MODULE=langstage_jupyter.agent`
+  runs the bundled default agent, but `--verify`, `--ask` and `/health` only checked for
+  `ANTHROPIC_API_KEY` when no agent was configured at all. Those paths now give the same
+  "ANTHROPIC_API_KEY is not set" verdict instead of a raw provider `TypeError`.
+- **`--show-config` credits `-a` / `--demo` to the flag (gh #121).** The launcher wrote
+  the spec into `LANGSTAGE_AGENT_SPEC` before resolving, so the table and `--json` said
+  `env:LANGSTAGE_AGENT_SPEC` for a variable the user never set. The source is now
+  `cli:-a/--agent` or `cli:--demo`.
+- **`--show-config --json` reads `labextension_version` from the installed bundle (gh
+  #131).** A wheel installs the bundle under `share/jupyter/labextensions/`, where the
+  launcher never looked, so it always reported the Python version and the drift check it
+  exists for could not fail. It now reads the bundle JupyterLab loads (first match on the
+  Jupyter data path, then a source checkout's copy) and is `null` when there is none.
+- **The launcher honors `LANGSTAGE_JUPYTER_TOKEN` (gh #139).** It read only the bare
+  `JUPYTER_TOKEN`, so the documented variable that `--show-config` showed was ignored and
+  a random token was generated. Order: `--IdentityProvider.token` /
+  `--ServerApp.token`, then `LANGSTAGE_JUPYTER_TOKEN` (legacy `DEEPAGENT_JUPYTER_TOKEN`
+  with the one-time deprecation notice, or `jupyter.token` in `langstage.toml`), then
+  `JUPYTER_TOKEN`, then a generated token.
+- **An unusable `model_temperature` is ignored with a note (gh #144).** A negative,
+  `nan` or `inf` value, or one above the provider's maximum (1 for Anthropic, 2 for
+  OpenAI and Gemini), was shown as live by `--show-config`, used to build the default
+  agent, and only failed as a provider 400 on the first turn. It now falls back to `0.0`
+  with a `note:`, like other invalid values. Providers without a known maximum only get
+  the `>= 0` and finite checks.
+- **The README custom-agent recipe includes the notebook tools (gh #145).** It passed
+  `tools=[]`, so an agent built from it had no notebook tools. It now passes
+  `langstage_jupyter.notebook_tools.NOTEBOOK_TOOLS`, and a test runs the recipe and checks
+  that all eight are bound.
+- **`LANGSTAGE_WORKSPACE_ROOT` is set before your agent is imported (gh #148).** Without
+  a pinned workspace the variable was published on the first chat message, after the
+  import, so an agent reading it at import (as the README shows) got nothing or crashed.
+  The server extension now records JupyterLab's root when it loads and publishes it
+  before the first import. `--verify` and `--ask` publish the launch directory the same
+  way.
+- **Notebook tools and file tools use the same directory when a workspace is pinned
+  (gh #150).** Notebook tools go through JupyterLab's contents API, so they work in the
+  directory JupyterLab serves, while file tools used the pinned workspace. With a pinned
+  `LANGSTAGE_WORKSPACE_ROOT` (env, `langstage.toml` or the launch dir's `.env`), the
+  launcher now serves that directory (`--ServerApp.root_dir`). If you pass your own
+  `--notebook-dir` / `--ServerApp.root_dir`, or start `jupyter lab` yourself, and it
+  differs from the pinned workspace, the launcher and the server log print a warning
+  naming both directories.
+
 ## 0.6.32 - 2026-09-24
 
 ### Fixed
