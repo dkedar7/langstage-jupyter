@@ -5,7 +5,6 @@ import asyncio
 import json
 import os
 import threading
-import warnings
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Dict
 
@@ -42,48 +41,9 @@ _PROVIDER_KEY_ENV = {
 }
 
 
-# Bare-name prefixes -> provider, used only if langchain's own parser can't be imported.
-# Mirrors the common cases of langchain's ``_attempt_infer_model_provider`` (gh #136).
-_FALLBACK_PROVIDER_PREFIXES = (
-    (("gpt-", "o1", "o3", "chatgpt", "text-davinci"), "openai"),
-    (("claude",), "anthropic"),
-    (("command",), "cohere"),
-    (("mistral", "mixtral"), "mistralai"),
-    (("deepseek",), "deepseek"),
-    (("grok",), "xai"),
-)
-
-
-def _infer_model_provider(model_name: str) -> str:
-    """The provider ``init_chat_model(model_name)`` would pick, or ``""`` if none.
-
-    The default agent builds its model with ``init_chat_model(MODEL_NAME)``, which accepts
-    both ``provider:model`` and a bare model name whose provider it infers
-    (``claude-sonnet-4-5`` -> anthropic, ``gpt-4o`` -> openai). Reading only the
-    ``provider:`` prefix made the key preflight skip every bare name, so ``/health`` showed a
-    false green and ``--verify`` hit a raw provider error (gh #136). So this asks langchain's
-    own parser, which is the one ``init_chat_model`` calls, and falls back to the common
-    prefixes only if that private helper ever moves.
-    """
-    try:
-        from langchain.chat_models.base import _parse_model
-    except ImportError:  # pragma: no cover - langchain moved its private helper
-        _parse_model = None
-    if _parse_model is not None:
-        try:
-            with warnings.catch_warnings():
-                # A bare 'gemini-*' name warns about a future provider default change.
-                warnings.simplefilter("ignore")
-                return _parse_model(model_name, None)[1]
-        except Exception:  # noqa: BLE001 - "can't infer" is ValueError; anything else too
-            return ""
-    lowered = model_name.lower()
-    if ":" in lowered:
-        return lowered.split(":", 1)[0]
-    for prefixes, provider in _FALLBACK_PROVIDER_PREFIXES:
-        if lowered.startswith(prefixes):
-            return provider
-    return ""
+# The provider inference moved to config so config validation can use it (gh #144); the
+# old name stays importable from here.
+from .config import infer_model_provider as _infer_model_provider  # noqa: E402
 
 
 def _missing_provider_key(model_name: str) -> Optional[str]:
@@ -122,7 +82,8 @@ def _missing_default_agent_key() -> Optional[str]:
     """
     from . import config
 
-    if not config.is_bundled_default(config._cfg):
+    # runs_bundled_default also covers the default picked by its own spec/module (gh #112).
+    if not config.runs_bundled_default(config._cfg):
         return None  # a custom agent was configured -> its credentials are not our concern
     return _missing_provider_key((getattr(config, "MODEL_NAME", "") or "").strip())
 
@@ -495,3 +456,9 @@ def setup_handlers(web_app):
     ]
 
     web_app.add_handlers(host_pattern, handlers)
+
+    # Root the agent at JupyterLab's serving root from its first load, not its first chat
+    # (gh #148), and say so if a pinned workspace points somewhere else (gh #150).
+    from .agent_wrapper import set_serving_root
+
+    set_serving_root(web_app.settings.get("server_root_dir"))

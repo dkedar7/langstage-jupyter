@@ -76,3 +76,27 @@ def test_custom_agent_example_loads_as_an_agent(tmp_path, monkeypatch):
     # The name the README sets, and a graph that could actually run a turn.
     assert getattr(graph, "name", None) == "my-custom-agent"
     assert hasattr(graph, "invoke"), "loaded object is not a runnable graph"
+
+
+def test_custom_agent_example_binds_the_notebook_tools(tmp_path, monkeypatch):
+    """#145: the recipe must give the agent the notebook tools the README advertises.
+
+    The old recipe ended with `tools=[]`, so an agent built from it verbatim had the
+    filesystem tools but none of the eight notebook tools (create/insert/modify/delete/
+    read/execute cells), and the README never said where they live. Execute the block
+    and check the tools bound to the compiled graph.
+    """
+    from langstage_core import load_agent_spec
+    from langstage_jupyter.notebook_tools import NOTEBOOK_TOOLS
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("LANGSTAGE_WORKSPACE_ROOT", str(tmp_path))
+    agent_file = tmp_path / "my_agent_tools.py"
+    agent_file.write_text(_CUSTOM_AGENT_EXAMPLE, encoding="utf-8")
+
+    graph = load_agent_spec(f"{agent_file}:agent")
+
+    bound = set(graph.nodes["tools"].bound.tools_by_name)
+    wanted = {getattr(t, "name", None) or t.__name__ for t in NOTEBOOK_TOOLS}
+    assert len(wanted) == 8
+    assert wanted <= bound, f"missing notebook tools: {sorted(wanted - bound)}"

@@ -77,15 +77,19 @@ class AgentWrapper:
         self._pinned_root = str(config.WORKSPACE_ROOT) if config.WORKSPACE_ROOT else None
         # Apply the pinned root as the shared source of truth (ADR 0005) BEFORE
         # loading the agent, so the default agent module builds its FilesystemBackend
-        # rooted there via core.workspace_root(). Unpinned: leave it — set_root_dir()
-        # applies JupyterLab's live launch dir on the first message.
-        if self._workspace_pinned:
-            apply_workspace(self._pinned_root)
+        # rooted there via core.workspace_root().
+        # Unpinned, publish the serving root (JupyterLab's root_dir, recorded by the server
+        # extension at load; the process cwd outside a server) BEFORE loading too. The
+        # README tells a custom agent it can read LANGSTAGE_WORKSPACE_ROOT at import, and
+        # that only held when pinned: unpinned, the var appeared on the first /chat, after
+        # the import had already read nothing (gh #148).
+        root = self._pinned_root if self._workspace_pinned else (_SERVING_ROOT or os.getcwd())
+        apply_workspace(root)
         self._load_agent()
         # The root the agent's backend was just built from. set_root_dir() compares
         # against this so it only rebuilds when JupyterLab's live root actually
         # differs. (gh #36)
-        self._applied_root = self._resolve_root(self._pinned_root or ".")
+        self._applied_root = self._resolve_root(root)
 
     @staticmethod
     def resolve_agent_target(agent_spec, agent_module, agent_variable,
@@ -438,6 +442,25 @@ class AgentWrapper:
 
 # Global agent instance
 _agent_instance: Optional[AgentWrapper] = None
+
+# JupyterLab's serving root (``ServerApp.root_dir``), recorded when the server extension
+# loads so the agent is rooted there from its first import (gh #148).
+_SERVING_ROOT: Optional[str] = None
+
+
+def set_serving_root(root_dir: Optional[str]) -> None:
+    """Record JupyterLab's serving root, and warn if a pinned workspace differs (gh #150)."""
+    global _SERVING_ROOT
+    _SERVING_ROOT = str(root_dir) if root_dir else None
+    if config.WORKSPACE_ROOT is not None:
+        warn_if_roots_disagree(_SERVING_ROOT, str(config.WORKSPACE_ROOT))
+
+
+def warn_if_roots_disagree(serving_root: Optional[str], pinned_root: Optional[str]) -> None:
+    """Print :func:`config.workspace_serving_mismatch`'s warning when there is one."""
+    message = config.workspace_serving_mismatch(serving_root, pinned_root)
+    if message:
+        print(message)
 
 
 def get_agent() -> AgentWrapper:

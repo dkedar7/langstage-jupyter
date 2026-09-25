@@ -7,14 +7,17 @@ launcher and `--show-config`. The module-level constants below are an
 env+defaults view (no TOML) kept for back-compat with existing call sites
 (``agent.py``, ``agent_wrapper.py``).
 """
+import math
 import os
+import warnings
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, ClassVar, Optional
 
 from langstage_core.host import HostConfig, load_toml_config  # noqa: F401  (re-exported for callers)
-from langstage_core.host.config import _env_bool_strict
+from langstage_core.host import parse_agent_spec
+from langstage_core.host.config import _env_bool_strict, _value_issue, _warn_invalid_value
 
 
 # The malformed-numeric-env handling that used to live here (a `_lenient_number`
@@ -64,6 +67,74 @@ def _positive_seconds(value: Any) -> float:
     if not seconds > 0:
         raise ValueError(f"must be a positive number of seconds, got {seconds!r}")
     return seconds
+
+
+def _sampling_temperature(value: Any) -> float:
+    """``model_temperature`` must be a finite number >= 0 for every provider. A negative,
+    ``nan`` or ``inf`` value used to be applied as-is, so the default agent's first turn
+    failed with a provider 400 that never named the setting (gh #144). The upper bound is
+    provider-specific and checked in :meth:`LabConfig.resolve`."""
+    temperature = float(value)
+    if not math.isfinite(temperature) or temperature < 0:
+        raise ValueError(f"must be a finite number >= 0, got {temperature!r}")
+    return temperature
+
+
+#: The highest sampling temperature each provider's API accepts. Anthropic's Messages
+#: API takes 0-1; OpenAI (incl. Azure) and Gemini take 0-2. A provider missing here gets
+#: no upper bound (Ollama and friends accept larger values). (gh #144)
+_PROVIDER_MAX_TEMPERATURE = {
+    "anthropic": 1.0,
+    "openai": 2.0,
+    "azure_openai": 2.0,
+    "google_genai": 2.0,
+    "google_vertexai": 2.0,
+}
+
+
+# Bare-name prefixes -> provider, used only if langchain's own parser can't be imported.
+# Mirrors the common cases of langchain's ``_attempt_infer_model_provider`` (gh #136).
+_FALLBACK_PROVIDER_PREFIXES = (
+    (("gpt-", "o1", "o3", "chatgpt", "text-davinci"), "openai"),
+    (("claude",), "anthropic"),
+    (("command",), "cohere"),
+    (("mistral", "mixtral"), "mistralai"),
+    (("deepseek",), "deepseek"),
+    (("grok",), "xai"),
+)
+
+
+def infer_model_provider(model_name: str) -> str:
+    """The provider ``init_chat_model(model_name)`` would pick, or ``""`` if none.
+
+    The default agent builds its model with ``init_chat_model(MODEL_NAME)``, which accepts
+    both ``provider:model`` and a bare model name whose provider it infers
+    (``claude-sonnet-4-5`` -> anthropic, ``gpt-4o`` -> openai). Reading only the
+    ``provider:`` prefix made the key preflight skip every bare name, so ``/health`` showed a
+    false green and ``--verify`` hit a raw provider error (gh #136). So this asks langchain's
+    own parser, which is the one ``init_chat_model`` calls, and falls back to the common
+    prefixes only if that private helper ever moves. Lives here (not in ``handlers``) so
+    config validation can use it without importing the server (gh #144).
+    """
+    try:
+        from langchain.chat_models.base import _parse_model
+    except ImportError:  # pragma: no cover - langchain moved its private helper
+        _parse_model = None
+    if _parse_model is not None:
+        try:
+            with warnings.catch_warnings():
+                # A bare 'gemini-*' name warns about a future provider default change.
+                warnings.simplefilter("ignore")
+                return _parse_model(model_name, None)[1]
+        except Exception:  # noqa: BLE001 - "can't infer" is ValueError; anything else too
+            return ""
+    lowered = model_name.lower()
+    if ":" in lowered:
+        return lowered.split(":", 1)[0]
+    for prefixes, provider in _FALLBACK_PROVIDER_PREFIXES:
+        if lowered.startswith(prefixes):
+            return provider
+    return ""
 
 
 def _strip_trailing_slash(value: Any) -> str:
@@ -135,7 +206,45 @@ class LabConfig(HostConfig):
     _VALIDATORS: ClassVar[dict] = {
         "execute_timeout": _positive_seconds,
         "jupyter_server_url": _strip_trailing_slash,
+        "model_temperature": _sampling_temperature,
     }
+
+    @classmethod
+    def resolve(cls, **kwargs) -> "LabConfig":
+        """Core's layered resolve, plus the provider-specific temperature ceiling.
+
+        A field validator only sees its own value, and the ceiling depends on the model's
+        provider (``1.5`` is fine for OpenAI, a 400 for Anthropic). An out-of-range value
+        degrades to the default with the same ``note:`` and ``config_issues()`` entry as a
+        field validator, so ``--show-config`` never shows it as live (gh #144).
+        """
+        cfg = super().resolve(**kwargs)
+        cfg._cap_temperature_for_provider()
+        return cfg
+
+    def _cap_temperature_for_provider(self) -> None:
+        temperature = self.model_temperature
+        # Skip the provider lookup (which imports langchain) for the usual in-range value.
+        if temperature is None or temperature <= min(_PROVIDER_MAX_TEMPERATURE.values()):
+            return
+        provider = infer_model_provider(str(self.model_name or "").strip())
+        ceiling = _PROVIDER_MAX_TEMPERATURE.get(provider)
+        if ceiling is None or temperature <= ceiling:
+            return
+        default = type(self).__dataclass_fields__["model_temperature"].default
+        exc = ValueError(
+            f"{provider} models accept 0-{ceiling:g} (model_name={self.model_name!r}), "
+            f"got {temperature!r}"
+        )
+        _warn_invalid_value("model_temperature", temperature, exc, default)
+        issues = getattr(self, "_value_issues", None)
+        if isinstance(issues, list):
+            issues.append(_value_issue(
+                "invalid_value", "model_temperature",
+                self.sources.get("model_temperature", "default"), temperature, exc, default,
+            ))
+        self.model_temperature = default
+        self.sources["model_temperature"] = "default"
 
     # Fields whose resolved value is a secret and must never be printed verbatim by
     # the config diagnostics. ``--show-config`` may SHOW jupyter_token (so the manual-
@@ -213,6 +322,62 @@ def is_bundled_default(cfg: "LabConfig") -> bool:
     return (
         sources.get("agent_module") == "default"
         and sources.get("agent_variable") == "default"
+    )
+
+
+#: The module the bundled default agent lives in, and the variable it exports.
+BUNDLED_AGENT_MODULE = "langstage_jupyter.agent"
+BUNDLED_AGENT_VARIABLE = "agent"
+
+
+def runs_bundled_default(cfg: "LabConfig") -> bool:
+    """True when the agent that will run IS the bundled default, however it was selected.
+
+    :func:`is_bundled_default` answers "was no agent configured?". This also covers the
+    default picked by name: ``LANGSTAGE_AGENT_SPEC=langstage_jupyter.agent:agent`` (the
+    example ``.env.example`` gives) or ``LANGSTAGE_AGENT_MODULE=langstage_jupyter.agent``.
+    Those run the same agent with the same model, so they need the same key. Keying the
+    missing-key preflight off ``is_bundled_default`` sent them to a raw provider
+    ``TypeError`` on the first turn instead (gh #112). A malformed spec is never the
+    default (it fails to load, gh #151).
+    """
+    if is_bundled_default(cfg):
+        return True
+    spec = str(getattr(cfg, "agent_spec", "") or "").strip()
+    if spec:
+        try:
+            module, variable = parse_agent_spec(spec)
+        except ValueError:
+            return False
+    else:
+        module = getattr(cfg, "agent_module", None)
+        variable = getattr(cfg, "agent_variable", None)
+    return module == BUNDLED_AGENT_MODULE and variable in (None, "", BUNDLED_AGENT_VARIABLE)
+
+
+def workspace_serving_mismatch(serving_root: Any, pinned_root: Any) -> Optional[str]:
+    """The warning for a pinned workspace that is not the JupyterLab serving root, or None.
+
+    The notebook tools go through the Jupyter contents API, so they (like kernels and
+    open tabs) always work in the serving root; the agent's file tools use the pinned
+    workspace. When the two differ they land in different directories (gh #150). The
+    launcher avoids that by serving the pinned workspace; this names the split when it
+    can't (an explicit ``--notebook-dir`` / ``--ServerApp.root_dir``, or plain
+    ``jupyter lab``). ADR 0006 keeps JupyterLab's root authoritative for notebooks.
+    """
+    if not serving_root or not pinned_root:
+        return None
+    serving = Path(str(serving_root)).expanduser().resolve()
+    pinned = Path(str(pinned_root)).expanduser().resolve()
+    if serving == pinned:
+        return None
+    return (
+        f"Warning: the pinned workspace {pinned} (LANGSTAGE_WORKSPACE_ROOT / workspace.root) "
+        f"is not the JupyterLab serving root {serving}. The agent's file tools use {pinned}, "
+        f"but its notebook tools (create_notebook, execute_cell, ...) use {serving}, where "
+        "JupyterLab keeps notebooks and kernels. To make them agree, launch with "
+        "`langstage-jupyter` without --notebook-dir (it serves the pinned workspace), or "
+        f"start Jupyter with --ServerApp.root_dir={pinned}."
     )
 
 

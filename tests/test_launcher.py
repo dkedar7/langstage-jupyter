@@ -269,11 +269,13 @@ class TestShowConfigJson:
 
         # version + labextension_version are both reported (the #82 drift surface).
         assert data["version"]
-        assert data["labextension_version"]
-        # --demo wires the demo agent via LANGSTAGE_AGENT_SPEC, so its source says so.
+        # null when no bundle is installed (a bare checkout in CI), never the Python
+        # version (gh #131).
+        assert "labextension_version" in data
+        # --demo is credited to the flag, not to an env var the user never set (gh #121).
         spec = data["config"]["agent_spec"]
         assert spec["value"] == DEMO_AGENT_SPEC
-        assert spec["source"] == "env:LANGSTAGE_AGENT_SPEC"
+        assert spec["source"] == "cli:--demo"
         assert spec["env"] == "LANGSTAGE_AGENT_SPEC"
         assert spec["legacy_env"] == "DEEPAGENT_AGENT_SPEC"
         assert spec["toml"] == "agent.spec"
