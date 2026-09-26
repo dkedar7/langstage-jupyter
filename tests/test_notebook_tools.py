@@ -716,6 +716,17 @@ def test_a_failed_interrupt_is_reported(exec_nb, monkeypatch):
     assert "could not interrupt" in out
 
 
+@pytest.mark.parametrize("arg", [0, -1])
+def test_execute_cell_names_the_cell_index_not_the_kernel_counter(exec_nb, monkeypatch, arg):
+    # gh #118: the header echoed the kernel's In[N] counter in the slot every other
+    # tool uses for the positional index, so an index-tracking agent saw a different cell.
+    client = _ExecClient([_msg("execute_input", {"execution_count": 8}),
+                          _msg("status", {"execution_state": "idle"})])
+    _use_client(monkeypatch, client)
+    out = nt.execute_cell("nb.ipynb", arg)
+    assert out.startswith("Executed cell [0] (In[8]) in ")
+
+
 # ── gh #123: clear_output / update_display_data are honored like JupyterLab ────
 
 
