@@ -691,7 +691,11 @@ def execute_cell(
     cell.outputs = run.outputs
     _save_notebook(nb, notebook_path)
 
-    return f"Executed cell [{run.execution_count}] in {notebook_path}:\n{run.summary()}"
+    # [...] is the positional index, as in every other tool; the kernel's In[N] counter
+    # is a separate label so an index-tracking agent isn't pointed at another cell (gh #118).
+    idx = cell_index if cell_index >= 0 else len(nb.cells) + cell_index
+    count = f" (In[{run.execution_count}])" if run.execution_count is not None else ""
+    return f"Executed cell [{idx}]{count} in {notebook_path}:\n{run.summary()}"
 
 
 class _Run:

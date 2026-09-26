@@ -118,7 +118,9 @@ class AgentWrapper:
             # split(':') printed a warning and silently fell back to the default agent, so a
             # typo'd -a / LANGSTAGE_AGENT_SPEC ran a different agent than asked (gh #151).
             module_path, variable = parse_agent_spec(agent_spec)
-            print(f"Using agent from environment: {module_path}:{variable}")
+            # No source claimed: the spec may come from env, langstage.toml, -a or --demo,
+            # and --show-config is what attributes it (gh #119).
+            print(f"Using agent: {module_path}:{variable}")
             return module_path, variable
         return (agent_module_path or agent_module,
                 agent_variable_name or agent_variable)

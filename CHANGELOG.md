@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.34 - 2026-09-25
+
+### Fixed
+- **`execute_cell` names the cell it ran (gh #118).** The confirmation read
+  `Executed cell [N]` with the kernel's `In[N]` counter in the slot every other notebook
+  tool uses for the positional index. It now reports the index (with `-1` resolved) and
+  the counter as a separate label: `Executed cell [2] (In[1]) in nb.ipynb:`.
+- **The agent status line no longer claims the spec came from the environment (gh
+  #119).** `--verify` / `--ask` / the sidebar printed `Using agent from environment:` for
+  a spec set in `langstage.toml`, by `-a` or by `--demo`. It now prints `Using agent: ...`;
+  `--show-config` remains the place that attributes the source.
+
 ## 0.6.33 - 2026-09-25
 
 ### Fixed

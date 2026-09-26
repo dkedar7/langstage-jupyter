@@ -80,6 +80,14 @@ class TestAgentSpecParsing:
             "  C:\\x\\agent.py:graph ", "default.agent", None
         ) == ("C:\\x\\agent.py", "graph")
 
+    def test_resolve_agent_target_does_not_claim_the_environment(self, capsys):
+        """gh #119: the resolver can't know where the spec came from (toml, -a, --demo
+        or env), so its status line must not assert "from environment"."""
+        AgentWrapper.resolve_agent_target("./a.py:graph", "default.agent", None)
+        out = capsys.readouterr().out
+        assert "from environment" not in out
+        assert "Using agent: ./a.py:graph" in out
+
 
 class TestContextAppending:
     """Tests for _append_context_to_message method."""

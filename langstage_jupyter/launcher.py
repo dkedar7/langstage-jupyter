@@ -654,7 +654,7 @@ def ask(prompt, *, thread_id="ask", turn_timeout=120.0):
     result = None
     # Keep stdout pure for the agent's reply (pipe-friendly — `--ask ... | grep`, like
     # --show-config --json separates its streams). The shared resolver/loader print progress
-    # ("Using agent from environment: ...") to stdout, and a user agent may debug-print
+    # ("Using agent: ...") to stdout, and a user agent may debug-print
     # mid-turn; fold ALL of that into stderr for the resolve+load+turn, then print ONLY the
     # reply to the real stdout below. An early-return failure exits inside this block with
     # stdout already restored by the context manager.

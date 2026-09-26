@@ -1541,7 +1541,7 @@ class TestAskFlag:
 
     def test_ask_stdout_is_only_the_reply(self, monkeypatch, capsys):
         # Pipe-friendliness (gh #101): stdout carries ONLY the reply; the resolver's
-        # progress noise ("Using agent from environment: ...") goes to stderr, so
+        # progress noise ("Using agent: ...") goes to stderr, so
         # `--ask ... | grep` sees just the agent's words.
         monkeypatch.setenv("LANGSTAGE_AGENT_SPEC", "")
         monkeypatch.setenv("DEEPAGENT_AGENT_SPEC", "")
@@ -1550,8 +1550,8 @@ class TestAskFlag:
             main()
         captured = capsys.readouterr()
         assert captured.out.strip() == "(demo agent) You said: ping"
-        assert "Using agent from environment" not in captured.out  # noise stayed off stdout
-        assert "Using agent from environment" in captured.err
+        assert "Using agent:" not in captured.out  # noise stayed off stdout
+        assert "Using agent:" in captured.err
 
     def test_ask_honors_module_and_variable_not_the_default(self, monkeypatch, capsys):
         # gh #90/#101: an agent selected via the DOCUMENTED LANGSTAGE_AGENT_MODULE +
