@@ -210,3 +210,66 @@ test('a tab with unsaved changes is not reloaded, and the user is told', async (
   await expect(agentCell(page)).toHaveCount(0);
   expect(await currentModelDirty(page)).toBe(true);
 });
+
+// ── gh #168: the approval card names the action for every interrupt shape ────────
+//
+// The card read `action_requests[0].tool`, which no langstage-core shape sets, so it
+// showed an empty "Tool:" (e.g. the demo-tools agent's `ask_user`). The /chat stream
+// is stubbed with the interrupt frame core emits for each request shape.
+
+const INTERRUPT_SHAPES: Array<[string, Record<string, unknown>, string]> = [
+  [
+    'HumanInterrupt list (demo tools ask_user)',
+    { action: 'ask_user', args: { question: 'What should I call you?' } },
+    'ask_user'
+  ],
+  [
+    'HITL middleware',
+    { name: 'write_file', args: { path: 'a.txt' }, description: 'Write a.txt' },
+    'write_file'
+  ],
+  [
+    'nested single interrupt',
+    { action_request: { action: 'confirm', args: {} }, description: 'Proceed?' },
+    'confirm'
+  ]
+];
+
+for (const [label, request, expected] of INTERRUPT_SHAPES) {
+  test(`approval card names the action: ${label}`, async ({ page }) => {
+    const frames = [
+      {
+        status: 'interrupt',
+        interrupt: {
+          action_requests: [request],
+          review_configs: [],
+          allowed_decisions: ['respond', 'approve']
+        }
+      },
+      { status: 'complete', outcome: 'interrupted' }
+    ];
+    await page.route('**/langstage-jupyter/chat', route =>
+      route.fulfill({
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+        body: frames.map(f => `data: ${JSON.stringify(f)}\n\n`).join('')
+      })
+    );
+
+    await page.evaluate(() =>
+      (window as any).jupyterapp.commands.execute('deepagents:open-chat')
+    );
+    await expect(page.locator('.deepagents-status-healthy')).toBeVisible({
+      timeout: 30_000
+    });
+    await page.locator('.deepagents-chat-input').fill('ask me');
+    await page.locator('.deepagents-send-button').click();
+
+    const card = page.locator('.deepagents-interrupt');
+    await expect(card).toBeVisible({ timeout: 15_000 });
+    await expect(card.locator('.deepagents-interrupt-description strong')).toHaveText(
+      expected
+    );
+    await expect(card.locator('.deepagents-approve-btn')).toBeVisible();
+  });
+}

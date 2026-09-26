@@ -5,6 +5,7 @@ import { IFileBrowserFactory } from '@jupyterlab/filebrowser';
 import { NotebookPanel } from '@jupyterlab/notebook';
 import { requestAPI } from './handler';
 import { AgentWriteTracker, reloadOpenDocument } from './reload';
+import { summarizeActions } from './interrupt';
 import ReactMarkdown from 'react-markdown';
 import { Send, RotateCw, Trash2, Square, Circle, CheckCircle2, ArrowRight } from 'lucide-react';
 
@@ -30,9 +31,14 @@ interface TodoItem {
  * Action request interface for interrupts
  */
 interface ActionRequest {
-  tool: string;
-  tool_call_id: string;
-  args: Record<string, any>;
+  // The name arrives as `name`, `action`, a nested `action_request.action` or `tool`
+  // depending on the interrupt shape; read it with `summarizeActions` (gh #168).
+  name?: string;
+  action?: string;
+  tool?: string;
+  action_request?: { action?: string; name?: string; args?: Record<string, any> };
+  tool_call_id?: string;
+  args?: Record<string, any>;
   description?: string;
 }
 
@@ -852,9 +858,16 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
                     <div className="deepagents-interrupt-header">
                       Approval required
                     </div>
-                    <div className="deepagents-interrupt-description">
-                      Tool: <strong>{message.interrupt.action_requests[0]?.tool}</strong>
-                    </div>
+                    {summarizeActions(message.interrupt.action_requests).map((action, idx) => (
+                      <div key={idx} className="deepagents-interrupt-description">
+                        Tool: <strong>{action.name}</strong>
+                        {action.description && (
+                          <div className="deepagents-interrupt-action-description">
+                            {action.description}
+                          </div>
+                        )}
+                      </div>
+                    ))}
                     <div className="deepagents-action-decisions">
                       {allowedDecisions(message.interrupt).includes('approve') && (
                         <button
@@ -886,7 +899,11 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
                           onClick={() => {
                             const newArgsStr = prompt(
                               'Edit arguments (JSON):',
-                              JSON.stringify(message.interrupt!.action_requests[0].args, null, 2)
+                              JSON.stringify(
+                                summarizeActions(message.interrupt!.action_requests)[0].args ?? {},
+                                null,
+                                2
+                              )
                             );
                             if (newArgsStr) {
                               try {
