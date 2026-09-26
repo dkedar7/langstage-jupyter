@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.36 - 2026-09-26
+
+### Fixed
+- **A second plain launch picks a free port (gh #165).** With one session already on
+  8888, a second `langstage-jupyter` without `--port` still chose 8888 and failed. The
+  auto-detect probe bound only the wildcard address, which Windows allows next to a
+  `localhost` listener. It now bind-tests the wildcard address, `127.0.0.1` and `::1`
+  (when present) from 8888 upward and takes the first port free on all of them; the
+  notebook tools' `LANGSTAGE_JUPYTER_SERVER_URL` and the printed URL use that port. A
+  pinned `--port` is still bound exactly (`port_retries=0`, gh #129) and `--port 0` is
+  still refused (gh #155).
+
 ## 0.6.35 - 2026-09-25
 
 ### Changed
