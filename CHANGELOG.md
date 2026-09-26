@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.37 - 2026-09-26
+
+### Fixed
+- **The sidebar approval card names the action (gh #168).** The card read
+  `action_requests[0].tool`, which no langstage-core interrupt shape sets, so it showed an
+  empty `Tool:`, e.g. for the demo-tools agent's `ask_user`. It now reads the name the way
+  the VS Code card does (langstage-vscode#101): `name` (HITL middleware), `action`
+  (HumanInterrupt list), a nested `action_request.action` (single `interrupt({...})`),
+  then `tool`, and falls back to "an action". It lists every requested action with its
+  description, and the Edit prompt pre-fills the args from the same shapes. New Galata
+  tests cover all three shapes.
+
 ## 0.6.36 - 2026-09-26
 
 ### Fixed
