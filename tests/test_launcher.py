@@ -488,7 +488,7 @@ class TestPortHandling:
         monkeypatch.setattr("sys.argv", ["langstage-jupyter", bad, "--no-browser"])
         with pytest.raises(SystemExit) as exc:
             main()
-        assert exc.value.code == 1
+        assert exc.value.code == 64  # usage error (ADR 0007)
         assert "invalid --port value" in capsys.readouterr().out
 
     def test_valid_port_is_not_duplicated(self, monkeypatch):
@@ -1684,7 +1684,7 @@ class TestValuelessLauncherFlags:
         monkeypatch.setattr("sys.argv", ["langstage-jupyter"] + argv)
         with pytest.raises(SystemExit) as exc:
             main()
-        assert exc.value.code == 1
+        assert exc.value.code == 64  # usage error (ADR 0007)
         assert not ran, "a prompt-less --ask ran a turn or booted a server"
         assert "--ask" in capsys.readouterr().err
 
@@ -1697,7 +1697,7 @@ class TestValuelessLauncherFlags:
         monkeypatch.setattr("sys.argv", ["langstage-jupyter"] + argv)
         with pytest.raises(SystemExit) as exc:
             main()
-        assert exc.value.code == 1
+        assert exc.value.code == 64  # usage error (ADR 0007)
         assert not ran
         assert "-a/--agent" in capsys.readouterr().err
 
@@ -1779,7 +1779,7 @@ class TestPortPinning:
         monkeypatch.setattr("sys.argv", ["langstage-jupyter"] + argv)
         with pytest.raises(SystemExit) as exc:
             main()
-        assert exc.value.code == 1
+        assert exc.value.code == 64  # usage error (ADR 0007)
         assert not ran
         assert "invalid --port value" in capsys.readouterr().out
 

@@ -31,6 +31,7 @@ from typing import Optional
 # console (gh #122, #126, #130, #140). Lives in langstage-core since 1.0.36, which adopted
 # the local helper from #141.
 from langstage_core.console import safe_print
+from langstage_jupyter.exit_codes import EXIT_FAIL, EXIT_PAUSED, EXIT_USAGE, exit_code_for_outcome
 
 # The keyless echo agent shipped with the shared core — see `--demo`.
 DEMO_AGENT_SPEC = "langstage_core.demo.stub:graph"
@@ -113,7 +114,10 @@ Launcher options:
   -h, --help         Show this message and exit.
 
 All other options are passed through to `jupyter lab`
-(run `jupyter lab --help` to see those)."""
+(run `jupyter lab --help` to see those).
+
+Exit codes: 0 ok, 1 failed (bad agent, check failed, can't start), 2 paused on a
+human-in-the-loop interrupt (--ask), 64 usage error (bad or conflicting flags)."""
 
 
 def ensure_jupyterlab():
@@ -617,11 +621,11 @@ def check_connection(*, timeout=5.0):
 # token juggling. The behavior twin of --verify: --verify proves the agent RUNS (its
 # output discarded); --ask runs the user's OWN prompt and prints the reply.
 
-#: The 0/1/2 exit vocabulary the whole family uses for a one-shot turn (matches
-#: langstage-agui --message and --verify): a clean turn is 0, an agent error 1, a
-#: human-in-the-loop interrupt 2.
+#: The family exit codes for a one-shot turn (langstage-core ADR 0007, matches
+#: langstage-agui --message): a clean turn is 0, an agent error 1, a human-in-the-loop
+#: interrupt 2.
 def _ask_exit_code(outcome: str) -> int:
-    return {"complete": 0, "error": 1, "interrupted": 2}.get(outcome, 1)
+    return exit_code_for_outcome(outcome)
 
 
 def ask(prompt, *, thread_id="ask", turn_timeout=120.0):
@@ -854,10 +858,10 @@ def main():
         ask_prompt, args = _extract_ask(args)
     except LauncherArgError as e:
         print(f"ERROR: {e}", file=sys.stderr)
-        sys.exit(1)
+        sys.exit(EXIT_USAGE)  # a usage error (ADR 0007); was 1
     if demo and agent_spec:
-        print("ERROR: --demo and -a/--agent are mutually exclusive")
-        sys.exit(1)
+        print("ERROR: --demo and -a/--agent are mutually exclusive", file=sys.stderr)
+        sys.exit(EXIT_USAGE)
     if demo:
         agent_spec = DEMO_AGENT_SPEC
     # Which launcher flag chose the agent, for --show-config's source column (gh #121).
@@ -872,7 +876,7 @@ def main():
             parse_agent_spec(agent_spec)
         except ValueError as e:
             safe_print(f"ERROR: -a/--agent: {e}", file=sys.stderr)
-            sys.exit(1)
+            sys.exit(EXIT_USAGE)  # a malformed flag value is a usage error (ADR 0007)
 
     # --show-config: print the resolved config (value, source, env var / TOML
     # key for each) and exit — now reflecting any -a/--demo parsed above.
@@ -1097,14 +1101,18 @@ def main():
                 "(the agent's notebook tools are pointed at it before the server starts, "
                 "so 0 = 'any free port' can't be used), or omit --port to auto-detect one."
             )
-            sys.exit(1)
+            sys.exit(EXIT_USAGE)  # a bad flag value is a usage error (ADR 0007)
 
     # Find available port
     if user_port is not None:
         port = user_port
         print(f"Using user-specified port: {port}")
     else:
-        port = find_available_port()
+        try:
+            port = find_available_port()
+        except RuntimeError as e:  # no free port: can't start -> 1, cleanly (ADR 0007)
+            print(f"ERROR: {e}", file=sys.stderr)
+            sys.exit(EXIT_FAIL)
         print(f"Auto-detected available port: {port}")
 
     # Check if the user pinned an auth token themselves. --IdentityProvider.token
@@ -1241,7 +1249,11 @@ def main():
         # a fatal config error, the root guard) exits the launcher 0, so `set -e`, CI
         # steps, systemd, and `langstage-jupyter && next` all think it succeeded (gh #62).
         result = subprocess.run(jupyter_args, env=os.environ)
-        sys.exit(result.returncode)
+        # ...except 2: JupyterLab's argparse exits 2 on a bad passthrough flag, and the
+        # family reserves 2 for "paused on a HITL interrupt" (ADR 0007), so a failed
+        # launch must never read as a pause. Map it to 1 (failure).
+        rc = result.returncode
+        sys.exit(EXIT_FAIL if rc == EXIT_PAUSED else rc)
     except KeyboardInterrupt:
         print("\n\nShutting down DeepAgent Lab...")
         sys.exit(0)

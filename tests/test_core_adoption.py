@@ -66,7 +66,7 @@ class TestMalformedSpecIsAnError:
         monkeypatch.setattr("sys.argv", ["langstage-jupyter", "-a", "my_agent.py", "--verify"])
         with pytest.raises(SystemExit) as exc:
             main()
-        assert exc.value.code == 1
+        assert exc.value.code == 64  # usage error (ADR 0007)
         err = capsys.readouterr().err
         assert "Invalid agent spec 'my_agent.py'" in err
         assert "my_agent.py:graph" in err  # core's fix-it hint
