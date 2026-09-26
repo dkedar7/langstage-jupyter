@@ -16,6 +16,7 @@ Example:
     langstage-jupyter --demo                   # keyless demo agent, no API key
     langstage-jupyter --show-config            # print resolved config and exit
 """
+import errno
 import importlib.util
 import os
 import sys
@@ -219,6 +220,39 @@ def _port_attempts():
     return DEFAULT_PORT_ATTEMPTS
 
 
+#: Where a port is bind-tested. JupyterLab serves ``localhost`` -- 127.0.0.1 and ::1 --
+#: and Windows lets the wildcard address bind alongside a specific-address listener,
+#: so a wildcard-only probe called a port that another session held "free" and the
+#: second launch then died on ``port_retries=0`` (gh #165). A port is free only if
+#: every one of these binds.
+_PROBE_ADDRESSES = (
+    (socket.AF_INET, ""),
+    (socket.AF_INET, "127.0.0.1"),
+    (socket.AF_INET6, "::1"),
+)
+
+#: bind() errors meaning "this address doesn't exist here" (no IPv6 loopback), not "busy".
+_ADDRESS_ABSENT_ERRNOS = {
+    getattr(errno, name) for name in ("EADDRNOTAVAIL", "EAFNOSUPPORT", "WSAEADDRNOTAVAIL",
+                                      "WSAEAFNOSUPPORT") if hasattr(errno, name)
+}
+
+
+def _port_is_free(port):
+    """True when ``port`` binds on every address a local JupyterLab would listen on."""
+    for family, host in _PROBE_ADDRESSES:
+        if family == socket.AF_INET6 and not socket.has_ipv6:
+            continue
+        try:
+            with socket.socket(family, socket.SOCK_STREAM) as s:
+                s.bind((host, port))
+        except OSError as e:
+            if family == socket.AF_INET6 and e.errno in _ADDRESS_ABSENT_ERRNOS:
+                continue  # no IPv6 loopback on this machine: nothing can hold it
+            return False
+    return True
+
+
 def find_available_port(start_port=8888, max_attempts=None):
     """Find an available port starting from start_port.
 
@@ -229,12 +263,8 @@ def find_available_port(start_port=8888, max_attempts=None):
     if max_attempts is None:
         max_attempts = _port_attempts()
     for port in range(start_port, start_port + max_attempts):
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.bind(('', port))
-                return port
-        except OSError:
-            continue
+        if _port_is_free(port):
+            return port
     last_port = start_port + max_attempts - 1
     raise RuntimeError(
         f"Could not find an available port in {start_port}-{last_port} "

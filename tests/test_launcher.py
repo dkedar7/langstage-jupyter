@@ -1784,6 +1784,73 @@ class TestPortPinning:
         assert "invalid --port value" in capsys.readouterr().out
 
 
+    @staticmethod
+    def _occupy_like_jupyter(port):
+        """Hold ``port`` the way a running JupyterLab does: listening on loopback only."""
+        held = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            held.bind(("127.0.0.1", port))
+        except OSError:
+            held.close()
+            pytest.skip(f"port {port} is already in use on this machine")
+        held.listen()
+        return held
+
+    @staticmethod
+    def _is_free(port):
+        for family, host in ((socket.AF_INET, "127.0.0.1"), (socket.AF_INET, "")):
+            with socket.socket(family, socket.SOCK_STREAM) as s:
+                try:
+                    s.bind((host, port))
+                except OSError:
+                    return False
+        return True
+
+    def test_unpinned_launch_skips_a_port_another_session_holds(self, monkeypatch):
+        # gh #165: with one session on 8888 (bound to 127.0.0.1, as jupyter binds
+        # `localhost`), the probe bound the wildcard address -- which Windows allows
+        # alongside a specific-address listener -- so a second plain launch picked
+        # 8888 again and died on port_retries=0 instead of moving to a free port.
+        held = self._occupy_like_jupyter(8888)
+        try:
+            calls = self._run_main(["--no-browser"], monkeypatch)
+            cmd = calls["cmd"]
+            port = int(cmd[cmd.index("--port") + 1])
+            assert port != 8888
+            assert calls["url"] == f"http://localhost:{port}"  # tools point at it
+            assert os.environ["LANGSTAGE_JUPYTER_SERVER_URL"] == calls["url"]
+            assert self._is_free(port)
+            assert "--ServerApp.port_retries=0" in cmd  # still exact once chosen
+        finally:
+            held.close()
+
+    def test_probe_rejects_a_loopback_only_listener(self):
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.bind(("127.0.0.1", 0))
+        s.listen()
+        busy = s.getsockname()[1]
+        try:
+            assert find_available_port(start_port=busy, max_attempts=5) != busy
+        finally:
+            s.close()
+
+    def test_probe_rejects_an_ipv6_loopback_listener(self):
+        if not socket.has_ipv6:
+            pytest.skip("no IPv6")
+        s = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+        try:
+            s.bind(("::1", 0))
+        except OSError:
+            s.close()
+            pytest.skip("no IPv6 loopback")
+        s.listen()
+        busy = s.getsockname()[1]
+        try:
+            assert find_available_port(start_port=busy, max_attempts=5) != busy
+        finally:
+            s.close()
+
+
 class TestCheckConnectionUrlShape:
     """gh #149: a scheme-less server URL raised a raw ValueError out of urllib."""
 
