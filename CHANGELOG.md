@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.35 - 2026-09-25
+
+### Changed
+- **Family exit codes** ([langstage-core ADR 0007](https://github.com/dkedar7/langstage-core/blob/main/docs/adr/0007-family-exit-codes.md)):
+  `0` ok, `1` failure, `2` paused on a HITL interrupt, `64` usage error. Usage errors that
+  exited `1` now exit `64`: a flag without its value (`-a`, `--ask`), `--demo` with `-a`
+  (its message now goes to stderr), a malformed `-a` spec and an invalid `--port`. A
+  `jupyter lab` child that exits `2` is reported as `1`, since `2` only means "paused".
+  Codes are defined locally in `langstage_jupyter.exit_codes`; no newer core is needed.
+- No free port in the auto-detect range is a clean `ERROR:` line and exit `1` instead of
+  a traceback.
+- `--help` lists the exit codes; README has an "Exit codes" section.
+
 ## 0.6.34 - 2026-09-25
 
 ### Fixed

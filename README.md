@@ -209,6 +209,19 @@ langstage-jupyter --check-connection
 
 It exits `0` when the configured `LANGSTAGE_JUPYTER_SERVER_URL` + `LANGSTAGE_JUPYTER_TOKEN` reach a running, auth-matching Jupyter, and `1` (naming the reason) when the server is unreachable or the token is rejected.
 
+### Exit codes
+
+`langstage-jupyter` uses the LangStage family's exit codes ([langstage-core ADR 0007](https://github.com/dkedar7/langstage-core/blob/main/docs/adr/0007-family-exit-codes.md)):
+
+| Code | Meaning |
+|---|---|
+| `0` | success: `--verify` / `--serve-check` / `--check-connection` passed, `--ask` completed, `--show-config` printed, JupyterLab exited cleanly |
+| `1` | failure: the agent can't load or its turn errored, a preflight failed, JupyterLab isn't installed, no free port, or JupyterLab itself failed to start (e.g. a busy `--port`) |
+| `2` | `--ask` paused on a human-in-the-loop interrupt: the agent is fine but needs input |
+| `64` | usage error: a flag without its value (`-a`, `--ask`), `--demo` with `-a`, a malformed `-a` spec, an invalid `--port` |
+
+A plain launch passes JupyterLab's own exit code through, except that a `2` from JupyterLab (its argument parser) becomes `1`, since `2` only ever means "paused". `--serve-check` exits `0` for a HITL agent whose served turn pauses cleanly: the endpoint is healthy.
+
 ## Using Custom Agents
 
 langstage-jupyter is designed to work with any langgraph-compatible agent. You can easily use your own langgraph-compatible agents instead of the default agent.
