@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-    <em>Bring LangChain agents into your JupyterLab workflow</em>
+    <em>Bring your LangGraph agents into your JupyterLab workflow</em>
 </p>
 
 ---
@@ -13,11 +13,13 @@
 
 ---
 
-A JupyterLab extension to allow **your** LangChain agents access to JuputerLab notebooks and files, enabling natural language interactions with your data science projects **directly from JupyterLab**.
+A JupyterLab extension to allow **your** LangGraph agents access to JupyterLab notebooks and files, enabling natural language interactions with your data science projects **directly from JupyterLab**.
 
 <p align="center">
-  <img src="https://storage.googleapis.com/deepagents/screenshot1.png" alt="DeepAgent Lab Demo" width=800>
+  <img src="https://dkedar7.github.io/langstage-docs/assets/demos/jupyter.gif" alt="Animated demo: a notebook cell runs, then the LangStage sidebar streams a tool call and pauses for approval, and Approve resumes the turn" width="800">
 </p>
+
+<p align="center"><sub>The keyless demo agent (<code>langstage-jupyter -a langstage_core.demo.tools:graph</code>), recorded by CI against the latest release. <a href="https://dkedar7.github.io/langstage-docs/stages/jupyter/">Docs for the JupyterLab stage</a></sub></p>
 
 Watch the full demo video here: [https://www.youtube.com/watch?v=vGA2vzMSQzo](https://www.youtube.com/watch?v=vGA2vzMSQzo)
 
@@ -32,7 +34,7 @@ langstage-jupyter is the JupyterLab stage of the **LangStage family**: write you
 | Terminal | [langstage-cli](https://github.com/dkedar7/langstage-cli) | `langstage-cli -a my_agent.py:graph` |
 | VS Code | [langstage-vscode](https://github.com/dkedar7/langstage-vscode) | chat participant + stdio sidecar |
 | Reference agent | [langstage-hermes](https://github.com/dkedar7/langstage-hermes) | `LANGSTAGE_AGENT_SPEC=langstage_hermes.agent:graph` on any stage |
-| Shared core | [langstage-core](https://github.com/dkedar7/langstage-core) | typed events + config resolver + AG-UI bridge behind every stage |
+| Shared core | [langstage-core](https://github.com/dkedar7/langstage-core) | AG-UI streaming bridge + config resolver behind every stage |
 
 ### Serve over AG-UI
 
@@ -247,7 +249,7 @@ workspace = os.getenv('LANGSTAGE_WORKSPACE_ROOT', '.')
 # Create your custom agent
 agent = create_deep_agent(
     name="my-custom-agent",  # Optional: name shown in chat interface
-    model="anthropic:claude-sonnet-4-20250514",
+    model="anthropic:claude-sonnet-4-6",
     backend=FilesystemBackend(root_dir=workspace, virtual_mode=True),
     checkpointer=MemorySaver(),
     tools=[*NOTEBOOK_TOOLS],  # add your own tools too, e.g. [*NOTEBOOK_TOOLS, my_tool]
