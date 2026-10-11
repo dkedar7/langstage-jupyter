@@ -9,6 +9,9 @@ import { expect, Page, test } from '@playwright/test';
  *
  * These tests drive the second server from playwright.config.js, at `/user/alice/`
  * with XSRF checks on, with plain Playwright (Galata's fixtures assume a root URL).
+ * That server's `base-url-settings/overrides.json` turns off JupyterLab's news
+ * prompt, as Galata's fixtures do; on a fresh profile its toast covers the sidebar's
+ * send button.
  */
 const BASE = 'http://localhost:8889/user/alice/';
 const PREFIX = '/user/alice/langstage-jupyter/';
