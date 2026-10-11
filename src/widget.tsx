@@ -3,29 +3,12 @@ import { ReactWidget } from '@jupyterlab/apputils';
 import { JupyterFrontEnd } from '@jupyterlab/application';
 import { IFileBrowserFactory } from '@jupyterlab/filebrowser';
 import { NotebookPanel } from '@jupyterlab/notebook';
-import { requestAPI } from './handler';
+import { postStream, requestAPI } from './handler';
 import { AgentWriteTracker, reloadOpenDocument } from './reload';
 import { summarizeActions } from './interrupt';
+import { SSELineBuffer, TodoItem, ToolCall, TurnAccumulator } from './stream';
 import ReactMarkdown from 'react-markdown';
 import { Send, RotateCw, Trash2, Square, Circle, CheckCircle2, ArrowRight } from 'lucide-react';
-
-/**
- * Tool call interface
- */
-interface ToolCall {
-  id: string;
-  name: string;
-  args: Record<string, any>;
-}
-
-/**
- * Todo item interface
- */
-interface TodoItem {
-  content: string;
-  status: 'pending' | 'in_progress' | 'completed';
-  activeForm?: string;
-}
 
 /**
  * Action request interface for interrupts
@@ -96,6 +79,7 @@ interface Message {
   timestamp: Date;
   error?: boolean;
   intermediates?: string[];
+  reasoning?: string;
   toolCalls?: ToolCall[];
   todoList?: TodoItem[];
   interrupt?: InterruptData;
@@ -229,9 +213,110 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
     }
   };
 
-  const getXSRFToken = (): string => {
-    const matches = document.cookie.match('\\b_xsrf=([^;]*)\\b');
-    return matches ? matches[1] : '';
+  // Put `fields` on the assistant message `id`, creating it if it isn't shown yet.
+  const upsertAssistantMessage = (id: string, fields: Partial<Message>) => {
+    setMessages(prev =>
+      prev.some(m => m.id === id)
+        ? prev.map(m => (m.id === id ? { ...m, ...fields } : m))
+        : [
+            ...prev,
+            { id, role: 'assistant' as const, content: '', timestamp: new Date(), ...fields }
+          ]
+    );
+  };
+
+  // Show a failed request (e.g. a non-2xx status) as the turn's error message,
+  // rather than ending the turn with nothing (gh #170).
+  const showTurnError = (id: string, error: unknown, fallback: string) => {
+    const errorMessage: Message = {
+      id,
+      role: 'assistant',
+      content: `Error: ${error instanceof Error ? error.message : fallback}`,
+      timestamp: new Date(),
+      error: true
+    };
+    setMessages(prev =>
+      prev.some(m => m.id === id)
+        ? prev.map(m => (m.id === id ? errorMessage : m))
+        : [...prev, errorMessage]
+    );
+  };
+
+  /**
+   * Read one turn's SSE stream (from /chat or /resume) into the assistant message
+   * `assistantMessageId`. The first streaming or interrupt frame creates it.
+   */
+  const readTurnStream = async (
+    response: Response,
+    assistantMessageId: string,
+    label: string
+  ) => {
+    if (!response.body) {
+      throw new Error('No response body');
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    const lines = new SSELineBuffer();
+    const turn = new TurnAccumulator();
+
+    const turnFields = (): Partial<Message> => {
+      const t = turn.snapshot();
+      return {
+        content: t.content,
+        intermediates: t.intermediates,
+        reasoning: t.reasoning || undefined,
+        toolCalls: t.toolCalls.length > 0 ? t.toolCalls : undefined,
+        todoList: t.todoList.length > 0 ? t.todoList : undefined
+      };
+    };
+
+    const handleFrame = (data: any) => {
+      console.log(`${label} SSE data:`, data);
+      syncAgentWrites(data);
+
+      if (data.status === 'streaming') {
+        turn.add(data);
+        upsertAssistantMessage(assistantMessageId, turnFields());
+      } else if (data.status === 'interrupt') {
+        // Show the decision UI.
+        setAwaitingDecision(true);
+        upsertAssistantMessage(assistantMessageId, { interrupt: data.interrupt });
+      } else if (data.status === 'complete') {
+        // The message keeps its intermediates, reasoning and tool calls.
+        console.log(`${label} stream complete`);
+      } else if (data.status === 'cancelled') {
+        addSystemMessage(data.message || 'Execution cancelled by user');
+      } else if (data.status === 'error') {
+        console.error(`${label} stream error:`, data.error);
+        setMessages(prev => [
+          ...prev,
+          {
+            id: `${assistantMessageId}-error`,
+            role: 'assistant' as const,
+            content: data.error || 'An error occurred',
+            timestamp: new Date(),
+            error: true
+          }
+        ]);
+      }
+    };
+
+    while (true) {
+      const { done, value } = await reader.read();
+      const payloads = done
+        ? lines.end()
+        : lines.push(decoder.decode(value, { stream: true }));
+      for (const payload of payloads) {
+        try {
+          handleFrame(JSON.parse(payload));
+        } catch (e) {
+          console.error(`Error parsing ${label} SSE data:`, e);
+        }
+      }
+      if (done) {
+        break;
+      }
+    }
   };
 
   const handleSendMessage = async () => {
@@ -347,200 +432,23 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
     console.log('Focused widget:', focusedWidget);
     console.log('Selected text:', selectedText ? `${selectedText.length} characters at ${selectionMetadata}` : 'none');
 
-    // Create a placeholder for intermediate updates
+    // The turn's reply streams into this assistant message.
     const assistantMessageId = (Date.now() + 1).toString();
-    let intermediateMessages: string[] = [];
-    let finalContent = '';
-    // The node whose text run we're currently accumulating; AG-UI streams token
-    // deltas, so consecutive same-node text chunks are one message (appended).
-    let currentTextNode: string | undefined;
-    let toolCalls: ToolCall[] = [];
-    let todoList: TodoItem[] = [];
 
     try {
-      const xsrfToken = getXSRFToken();
-      const response = await fetch(
-        `/langstage-jupyter/chat`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-XSRFToken': xsrfToken
-          },
-          body: JSON.stringify({
-            message: savedInput,
-            stream: true,
-            thread_id: threadId,
-            current_directory: currentDirectory,
-            focused_widget: focusedWidget,
-            selected_text: selectedText,
-            selection_metadata: selectionMetadata
-          })
-        }
-      );
-
-      if (!response.body) {
-        throw new Error('No response body');
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        const chunk = decoder.decode(value);
-        const lines = chunk.split('\n');
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              console.log('Received SSE data:', data);
-              syncAgentWrites(data);
-
-              if (data.status === 'streaming') {
-                // Handle tool calls
-                if (data.tool_calls) {
-                  data.tool_calls.forEach((tc: ToolCall) => {
-                    toolCalls.push({ ...tc });
-                  });
-                  // A tool break ends the current text run, so text after it
-                  // starts a new intermediate message.
-                  currentTextNode = undefined;
-                }
-
-                // Handle todo list updates
-                if (data.todo_list) {
-                  todoList = data.todo_list;
-                }
-
-                // Handle regular content. AG-UI streams token DELTAS (not
-                // cumulative per-message chunks), so accumulate consecutive
-                // same-node deltas into one intermediate — a normal reply then
-                // renders as a single clean block, while a node/tool break starts
-                // a new intermediate (preserving the grey multi-step display).
-                if (data.chunk) {
-                  const node = data.node ?? '';
-                  if (currentTextNode === node && intermediateMessages.length > 0) {
-                    intermediateMessages[intermediateMessages.length - 1] += data.chunk;
-                  } else {
-                    intermediateMessages.push(data.chunk);
-                    currentTextNode = node;
-                  }
-                  finalContent = intermediateMessages[intermediateMessages.length - 1];
-                }
-
-                // Update the message in place
-                setMessages(prev => {
-                  const existing = prev.find(m => m.id === assistantMessageId);
-                  if (existing) {
-                    return prev.map(m =>
-                      m.id === assistantMessageId
-                        ? {
-                            ...m,
-                            content: finalContent,
-                            intermediates: [...intermediateMessages],
-                            toolCalls: toolCalls.length > 0 ? [...toolCalls] : undefined,
-                            todoList: todoList.length > 0 ? [...todoList] : undefined
-                          }
-                        : m
-                    );
-                  } else {
-                    return [...prev, {
-                      id: assistantMessageId,
-                      role: 'assistant' as const,
-                      content: finalContent,
-                      timestamp: new Date(),
-                      intermediates: [...intermediateMessages],
-                      toolCalls: toolCalls.length > 0 ? [...toolCalls] : undefined,
-                      todoList: todoList.length > 0 ? [...todoList] : undefined
-                    }];
-                  }
-                });
-              } else if (data.status === 'interrupt') {
-                // Handle interrupt - show decision UI
-                setAwaitingDecision(true);
-                setMessages(prev => {
-                  const existing = prev.find(m => m.id === assistantMessageId);
-                  if (existing) {
-                    return prev.map(m =>
-                      m.id === assistantMessageId
-                        ? {
-                            ...m,
-                            interrupt: data.interrupt
-                          }
-                        : m
-                    );
-                  } else {
-                    return [...prev, {
-                      id: assistantMessageId,
-                      role: 'assistant' as const,
-                      content: '',
-                      timestamp: new Date(),
-                      interrupt: data.interrupt
-                    }];
-                  }
-                });
-              } else if (data.status === 'complete') {
-                console.log('Stream complete. Final content:', finalContent);
-                // Stream complete - keep intermediates visible
-                setMessages(prev => {
-                  const existing = prev.find(m => m.id === assistantMessageId);
-                  if (!existing && (finalContent || toolCalls.length > 0 || todoList.length > 0)) {
-                    // Add message if it doesn't exist but we have content, tool calls, or todos
-                    return [...prev, {
-                      id: assistantMessageId,
-                      role: 'assistant' as const,
-                      content: finalContent,
-                      timestamp: new Date(),
-                      intermediates: intermediateMessages.length > 0 ? [...intermediateMessages] : undefined,
-                      toolCalls: toolCalls.length > 0 ? [...toolCalls] : undefined,
-                      todoList: todoList.length > 0 ? [...todoList] : undefined
-                    }];
-                  }
-                  // If message exists, leave it as is (with intermediates, tool calls, and todos)
-                  return prev;
-                });
-              } else if (data.status === 'cancelled') {
-                console.log('Execution cancelled');
-                addSystemMessage(data.message || 'Execution cancelled by user');
-              } else if (data.status === 'error') {
-                console.error('Stream error:', data.error);
-                setMessages(prev => [...prev, {
-                  id: assistantMessageId,
-                  role: 'assistant' as const,
-                  content: data.error || 'An error occurred',
-                  timestamp: new Date(),
-                  error: true
-                }]);
-              }
-            } catch (e) {
-              console.error('Error parsing SSE data:', e);
-            }
-          }
-        }
-      }
+      const response = await postStream('chat', {
+        message: savedInput,
+        stream: true,
+        thread_id: threadId,
+        current_directory: currentDirectory,
+        focused_widget: focusedWidget,
+        selected_text: selectedText,
+        selection_metadata: selectionMetadata
+      });
+      await readTurnStream(response, assistantMessageId, 'Chat');
     } catch (error) {
       console.error('Error sending message:', error);
-
-      const errorMessage: Message = {
-        id: assistantMessageId,
-        role: 'assistant',
-        content: `Error: ${error instanceof Error ? error.message : 'Failed to send message'}`,
-        timestamp: new Date(),
-        error: true
-      };
-
-      setMessages(prev => {
-        const existing = prev.find(m => m.id === assistantMessageId);
-        if (existing) {
-          return prev.map(m => m.id === assistantMessageId ? errorMessage : m);
-        } else {
-          return [...prev, errorMessage];
-        }
-      });
+      showTurnError(assistantMessageId, error, 'Failed to send message');
     } finally {
       setIsLoading(false);
       inputRef.current?.focus();
@@ -550,150 +458,17 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
   const handleResumeFromInterrupt = async (decisions: Decision[]) => {
     setAwaitingDecision(false);
     setIsLoading(true);
+    const assistantMessageId = (Date.now() + 1).toString();
 
     try {
-      const xsrfToken = getXSRFToken();
-      const response = await fetch(
-        `/langstage-jupyter/resume`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-XSRFToken': xsrfToken
-          },
-          body: JSON.stringify({
-            decisions: decisions,
-            thread_id: threadId
-          })
-        }
-      );
-
-      if (!response.body) {
-        throw new Error('No response body');
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-
-      const assistantMessageId = (Date.now() + 1).toString();
-      let intermediateMessages: string[] = [];
-      let finalContent = '';
-      let currentTextNode: string | undefined;
-      let toolCalls: ToolCall[] = [];
-      let todoList: TodoItem[] = [];
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        const chunk = decoder.decode(value);
-        const lines = chunk.split('\n');
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              console.log('Resume SSE data:', data);
-              syncAgentWrites(data);
-
-              if (data.status === 'streaming') {
-                if (data.tool_calls) {
-                  data.tool_calls.forEach((tc: ToolCall) => {
-                    toolCalls.push({ ...tc });
-                  });
-                  currentTextNode = undefined;
-                }
-
-                if (data.todo_list) {
-                  todoList = data.todo_list;
-                }
-
-                // Accumulate AG-UI token deltas per node (see the send path above).
-                if (data.chunk) {
-                  const node = data.node ?? '';
-                  if (currentTextNode === node && intermediateMessages.length > 0) {
-                    intermediateMessages[intermediateMessages.length - 1] += data.chunk;
-                  } else {
-                    intermediateMessages.push(data.chunk);
-                    currentTextNode = node;
-                  }
-                  finalContent = intermediateMessages[intermediateMessages.length - 1];
-                }
-
-                setMessages(prev => {
-                  const existing = prev.find(m => m.id === assistantMessageId);
-                  if (existing) {
-                    return prev.map(m =>
-                      m.id === assistantMessageId
-                        ? {
-                            ...m,
-                            content: finalContent,
-                            intermediates: [...intermediateMessages],
-                            toolCalls: toolCalls.length > 0 ? [...toolCalls] : undefined,
-                            todoList: todoList.length > 0 ? [...todoList] : undefined
-                          }
-                        : m
-                    );
-                  } else {
-                    return [...prev, {
-                      id: assistantMessageId,
-                      role: 'assistant' as const,
-                      content: finalContent,
-                      timestamp: new Date(),
-                      intermediates: [...intermediateMessages],
-                      toolCalls: toolCalls.length > 0 ? [...toolCalls] : undefined,
-                      todoList: todoList.length > 0 ? [...todoList] : undefined
-                    }];
-                  }
-                });
-              } else if (data.status === 'interrupt') {
-                // Another interrupt
-                setAwaitingDecision(true);
-                setMessages(prev => {
-                  const existing = prev.find(m => m.id === assistantMessageId);
-                  if (existing) {
-                    return prev.map(m =>
-                      m.id === assistantMessageId
-                        ? {
-                            ...m,
-                            interrupt: data.interrupt
-                          }
-                        : m
-                    );
-                  } else {
-                    return [...prev, {
-                      id: assistantMessageId,
-                      role: 'assistant' as const,
-                      content: '',
-                      timestamp: new Date(),
-                      interrupt: data.interrupt
-                    }];
-                  }
-                });
-              } else if (data.status === 'complete') {
-                console.log('Resume complete');
-              } else if (data.status === 'cancelled') {
-                console.log('Resume cancelled');
-                addSystemMessage(data.message || 'Execution cancelled by user');
-              } else if (data.status === 'error') {
-                console.error('Resume error:', data.error);
-                setMessages(prev => [...prev, {
-                  id: assistantMessageId,
-                  role: 'assistant' as const,
-                  content: data.error || 'An error occurred',
-                  timestamp: new Date(),
-                  error: true
-                }]);
-              }
-            } catch (e) {
-              console.error('Error parsing resume SSE data:', e);
-            }
-          }
-        }
-      }
+      const response = await postStream('resume', {
+        decisions: decisions,
+        thread_id: threadId
+      });
+      await readTurnStream(response, assistantMessageId, 'Resume');
     } catch (error) {
       console.error('Error resuming from interrupt:', error);
-      addSystemMessage(`Error: ${error instanceof Error ? error.message : 'Failed to resume'}`);
+      showTurnError(assistantMessageId, error, 'Failed to resume');
     } finally {
       setIsLoading(false);
       inputRef.current?.focus();
@@ -812,6 +587,12 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
                 </span>
               </div>
               <div className="deepagents-message-content">
+                {message.reasoning && (
+                  <details className="deepagents-reasoning">
+                    <summary className="deepagents-reasoning-summary">Thinking</summary>
+                    <div className="deepagents-reasoning-content">{message.reasoning}</div>
+                  </details>
+                )}
                 {message.intermediates && message.intermediates.length > 1 && (
                   <div className="deepagents-message-intermediates">
                     {message.intermediates.slice(0, -1).map((intermediate, idx) => (

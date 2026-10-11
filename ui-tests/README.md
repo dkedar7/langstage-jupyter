@@ -30,7 +30,12 @@ jlpm test:debug                 # headed / inspector
 
 ## What it covers
 
-`tests/deepagent-lab.spec.ts` is a smoke test: opens the chat sidebar, waits for
+`tests/langstage-jupyter.spec.ts` is a smoke test: opens the chat sidebar, waits for
 the agent health indicator to go green, sends a message, and asserts the streamed
 reply renders. Add visual-regression checks with `expect(page).toHaveScreenshot()`
 and refresh baselines via `jlpm test:update`.
+
+`tests/base-url.spec.ts` runs against a second server that `playwright.config.js`
+starts at `http://localhost:8889/user/alice/` (the `start:base-url` script, XSRF
+checks on), so the sidebar is also tested under a JupyterHub-style base URL (gh #170).
+`tests/unit.spec.ts` imports `src/` helpers directly and needs no browser.

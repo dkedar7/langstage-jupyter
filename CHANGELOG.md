@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.6.38 - 2026-10-11
+
+### Fixed
+- **The sidebar works under a non-root `base_url` (gh #170).** Chat and resume POSTed
+  to the hard-coded `/langstage-jupyter/chat` and `/langstage-jupyter/resume`, outside
+  the server's prefix. Under `--ServerApp.base_url=/foo/`, and on every JupyterHub server
+  (`/user/<name>/`), they got a 403, and the turn ended with no reply and no error while
+  the status dot stayed green. Both requests now go through `ServerConnection`, like
+  `health` and `reload`: the URL is built from the page's base URL with `URLExt.join`,
+  and the request carries the XSRF header and any token. A non-2xx response now shows an
+  error in the sidebar with the status and the server's message, e.g. `Chat request
+  failed: 403 Forbidden`. The stream reader also keeps an SSE frame that a read (or a
+  proxy) splits in two; before, that frame was dropped.
+- **The sidebar shows the model's reasoning (dkedar7/langstage#196).** The server
+  streams `{"status": "streaming", "reasoning": ...}` frames, but the sidebar only read
+  `tool_calls`, `todo_list` and `chunk`, so the reasoning was dropped. It now accumulates
+  into a collapsed **Thinking** block above the turn's answer, styled like a tool card.
+  Reasoning that resumes after a tool call starts a new paragraph.
+- Chat and resume now share one stream reader (`src/stream.ts`), so they can't drift.
+  A resume that fails shows the same error message as a failed chat, not a system line.
+- New tests: unit tests for the URL, error-message and stream helpers; Galata tests for
+  the Thinking block and for failed chat and resume requests; and a second test server at
+  `/user/alice/` (XSRF checks on) that runs a real chat turn and a resume under the base URL.
+
 ## 0.6.37 - 2026-09-26
 
 ### Fixed

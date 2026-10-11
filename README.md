@@ -49,7 +49,7 @@ langstage-agui --agent my_agent.py:graph
 
 ## Features
 
-- **Chat Interface**: Sidebar for natural conversations with your agent
+- **Chat Interface**: Sidebar for natural conversations with your agent. It streams the reply, tool calls, the todo list and the model's reasoning (in a collapsed **Thinking** block)
 - **Notebook Manipulation**: Built-in tools for creating, editing, and executing Jupyter notebooks
 - **Human-in-the-Loop**: Review and approve agent actions before execution
 - **Context Awareness**: Automatically sends workspace and file context to your agent
@@ -178,6 +178,8 @@ langstage-jupyter -a my_agent.py:graph --ask "2+2?" | grep -q 4
 
 The extension serves its REST/SSE routes under `/<base_url>langstage-jupyter/`:
 `health` (GET), `chat` (POST, SSE), `resume` (POST, SSE), `reload` (POST), `cancel` (POST).
+The sidebar builds every URL from the server's base URL, so it also works under JupyterHub
+(`/user/<name>/`) or any `--ServerApp.base_url`.
 
 ### Alternative: Manual Configuration
 

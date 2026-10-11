@@ -1,5 +1,33 @@
 import { expect, IJupyterLabPageFixture, test } from '@jupyterlab/galata';
 
+// The sidebar's /chat and /resume requests. They go through ServerConnection, which
+// adds a cache-busting query (`?<time>`), so match with or without one.
+const CHAT_URL = /\/langstage-jupyter\/chat(\?|$)/;
+const RESUME_URL = /\/langstage-jupyter\/resume(\?|$)/;
+
+/** Serve `frames` as the SSE body of the requests matching `url`. */
+async function stubStream(page: IJupyterLabPageFixture, url: RegExp, frames: any[]) {
+  await page.route(url, route =>
+    route.fulfill({
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+      body: frames.map(f => `data: ${JSON.stringify(f)}\n\n`).join('')
+    })
+  );
+}
+
+/** Open the sidebar, wait for the agent, and send `text`. */
+async function sendInHealthyChat(page: IJupyterLabPageFixture, text: string) {
+  await page.evaluate(() =>
+    (window as any).jupyterapp.commands.execute('deepagents:open-chat')
+  );
+  await expect(page.locator('.deepagents-status-healthy')).toBeVisible({
+    timeout: 30_000
+  });
+  await page.locator('.deepagents-chat-input').fill(text);
+  await page.locator('.deepagents-send-button').click();
+}
+
 /**
  * Smoke test: open the LangStage chat sidebar, confirm it connects to the
  * (stub) agent, send a message, and verify the streamed reply renders.
@@ -152,22 +180,8 @@ async function runAgentWrite(page: IJupyterLabPageFixture, path: string) {
     { status: 'streaming', chunk: 'Done.', node: 'model', message_id: 'm1' },
     { status: 'complete', outcome: 'complete' }
   ];
-  await page.route('**/langstage-jupyter/chat', route =>
-    route.fulfill({
-      status: 200,
-      headers: { 'Content-Type': 'text/event-stream' },
-      body: frames.map(f => `data: ${JSON.stringify(f)}\n\n`).join('')
-    })
-  );
-
-  await page.evaluate(() =>
-    (window as any).jupyterapp.commands.execute('deepagents:open-chat')
-  );
-  await expect(page.locator('.deepagents-status-healthy')).toBeVisible({
-    timeout: 30_000
-  });
-  await page.locator('.deepagents-chat-input').fill('add a cell');
-  await page.locator('.deepagents-send-button').click();
+  await stubStream(page, CHAT_URL, frames);
+  await sendInHealthyChat(page, 'add a cell');
   await expect(
     page.locator('.deepagents-message-assistant').filter({ hasText: 'Done.' })
   ).toBeVisible({ timeout: 15_000 });
@@ -248,22 +262,8 @@ for (const [label, request, expected] of INTERRUPT_SHAPES) {
       },
       { status: 'complete', outcome: 'interrupted' }
     ];
-    await page.route('**/langstage-jupyter/chat', route =>
-      route.fulfill({
-        status: 200,
-        headers: { 'Content-Type': 'text/event-stream' },
-        body: frames.map(f => `data: ${JSON.stringify(f)}\n\n`).join('')
-      })
-    );
-
-    await page.evaluate(() =>
-      (window as any).jupyterapp.commands.execute('deepagents:open-chat')
-    );
-    await expect(page.locator('.deepagents-status-healthy')).toBeVisible({
-      timeout: 30_000
-    });
-    await page.locator('.deepagents-chat-input').fill('ask me');
-    await page.locator('.deepagents-send-button').click();
+    await stubStream(page, CHAT_URL, frames);
+    await sendInHealthyChat(page, 'ask me');
 
     const card = page.locator('.deepagents-interrupt');
     await expect(card).toBeVisible({ timeout: 15_000 });
@@ -273,3 +273,93 @@ for (const [label, request, expected] of INTERRUPT_SHAPES) {
     await expect(card.locator('.deepagents-approve-btn')).toBeVisible();
   });
 }
+
+// ── langstage#196: the sidebar shows the model's reasoning ──────────────────────────
+//
+// The SSE loop handled only tool_calls, todo_list and chunk, so `reasoning` frames were
+// dropped. They now accumulate into a collapsed "Thinking" block above the answer.
+
+test('reasoning streams into a collapsed Thinking block above the answer', async ({
+  page
+}) => {
+  await stubStream(page, CHAT_URL, [
+    { status: 'streaming', reasoning: 'Let me reason about this step by step. ', node: 'agent' },
+    { status: 'streaming', reasoning: 'The demo streams this as a reasoning frame.', node: 'agent' },
+    { status: 'streaming', chunk: 'Done reasoning.', node: 'agent', message_id: 'm1' },
+    { status: 'complete', outcome: 'complete' }
+  ]);
+  await sendInHealthyChat(page, 'think about it');
+
+  const message = page
+    .locator('.deepagents-message-assistant')
+    .filter({ hasText: 'Done reasoning.' });
+  await expect(message).toBeVisible({ timeout: 15_000 });
+  const thinking = message.locator('details.deepagents-reasoning');
+  await expect(thinking).toHaveCount(1);
+  await expect(thinking.locator('summary')).toHaveText('Thinking');
+  // Collapsed, and above the answer.
+  expect(await thinking.evaluate(d => (d as HTMLDetailsElement).open)).toBe(false);
+  await expect(thinking.locator('.deepagents-reasoning-content')).toBeHidden();
+  expect(
+    await message.evaluate(el => {
+      const block = el.querySelector('.deepagents-reasoning')!;
+      const answer = el.querySelector('.deepagents-message-content > p')!;
+      return Boolean(
+        block.compareDocumentPosition(answer) & Node.DOCUMENT_POSITION_FOLLOWING
+      );
+    })
+  ).toBe(true);
+
+  await thinking.locator('summary').click();
+  await expect(thinking.locator('.deepagents-reasoning-content')).toHaveText(
+    'Let me reason about this step by step. The demo streams this as a reasoning frame.'
+  );
+});
+
+// ── gh #170: a failed request shows an error, not an empty turn ─────────────────────
+
+test('a failed chat request shows its status', async ({ page }) => {
+  await page.route(CHAT_URL, route =>
+    route.fulfill({
+      status: 403,
+      headers: { 'Content-Type': 'text/html' },
+      body: '<html><title>403: Forbidden</title></html>'
+    })
+  );
+  await sendInHealthyChat(page, 'hello');
+
+  await expect(
+    page
+      .locator('.deepagents-message-error')
+      .filter({ hasText: 'Chat request failed: 403' })
+  ).toBeVisible({ timeout: 15_000 });
+});
+
+test('a failed resume request shows its status', async ({ page }) => {
+  await stubStream(page, CHAT_URL, [
+    {
+      status: 'interrupt',
+      interrupt: {
+        action_requests: [{ action: 'ask_user', args: {} }],
+        allowed_decisions: ['respond', 'approve']
+      }
+    },
+    { status: 'complete', outcome: 'interrupted' }
+  ]);
+  await page.route(RESUME_URL, route =>
+    route.fulfill({
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: 'agent crashed' })
+    })
+  );
+  await sendInHealthyChat(page, 'ask me');
+  await page.locator('.deepagents-approve-btn').click();
+
+  await expect(
+    page
+      .locator('.deepagents-message-error')
+      .filter({ hasText: 'Resume request failed: 500' })
+      .filter({ hasText: 'agent crashed' })
+  ).toBeVisible({ timeout: 15_000 });
+});

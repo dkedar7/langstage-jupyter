@@ -556,7 +556,8 @@
   opacity: 0.8;
 }
 
-.deepagents-tool-call {
+.deepagents-tool-call,
+.deepagents-reasoning {
   font-size: var(--da-text-sm);
   color: var(--da-foreground-muted);
   margin: var(--da-space-2) 0;
@@ -575,7 +576,8 @@
   background: var(--da-surface-elevated);
 }
 
-.deepagents-tool-call-summary {
+.deepagents-tool-call-summary,
+.deepagents-reasoning-summary {
   font-style: normal;
   font-weight: 500;
   padding: 2px 0;
@@ -584,11 +586,13 @@
   color: var(--da-foreground);
 }
 
-.deepagents-tool-call-summary::-webkit-details-marker {
+.deepagents-tool-call-summary::-webkit-details-marker,
+.deepagents-reasoning-summary::-webkit-details-marker {
   display: none;
 }
 
-.deepagents-tool-call-summary::before {
+.deepagents-tool-call-summary::before,
+.deepagents-reasoning-summary::before {
   content: '›';
   display: inline-block;
   transition: transform var(--da-transition-base);
@@ -598,7 +602,8 @@
   font-weight: var(--da-weight-bold);
 }
 
-.deepagents-tool-call[open] .deepagents-tool-call-summary::before {
+.deepagents-tool-call[open] .deepagents-tool-call-summary::before,
+.deepagents-reasoning[open] .deepagents-reasoning-summary::before {
   transform: rotate(90deg);
 }
 
@@ -629,6 +634,31 @@
   overflow-x: auto;
   /* white-space: pre-wrap; */
   word-wrap: break-word;
+}
+
+/* Reasoning ("Thinking") block: a collapsed card like a tool call, above the
+   answer. A neutral accent keeps it apart from the tool calls. */
+.deepagents-reasoning {
+  margin: 0 0 12px 0;
+  opacity: 0.8;
+  border-left-color: var(--da-border-strong);
+}
+
+.deepagents-reasoning:hover {
+  border-left-color: var(--da-foreground-subtle);
+}
+
+.deepagents-reasoning-content {
+  margin: 10px 0 0 0;
+  padding: 10px 12px;
+  border-top: 1px solid var(--da-border);
+  font-size: var(--da-text-sm);
+  font-style: italic;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  color: var(--da-foreground-muted);
+  cursor: auto;
 }
 
 /* Todo list styling - Professional refinement */

@@ -5,6 +5,7 @@
   "private": true,
   "scripts": {
     "start": "jupyter lab --config jupyter_server_test_config.py",
+    "start:base-url": "jupyter lab --config jupyter_server_test_config.py --ServerApp.port=8889 --ServerApp.base_url=/user/alice/ --ServerApp.disable_check_xsrf=False",
     "test": "jlpm playwright test",
     "test:update": "jlpm playwright test --update-snapshots",
     "test:debug": "PWDEBUG=1 jlpm playwright test"
