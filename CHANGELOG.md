@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.39 - 2026-10-11
+
+### Changed
+- **Requires langstage-core 1.0.47**, so upgrading langstage-jupyter picks up two core fixes:
+  - A turn resumed after an approval no longer re-sends what it said before it paused
+    (1.0.46), so that part isn't shown twice.
+  - The agent's own recursion limit is honored (1.0.47). Every agent, deepagents ones
+    included, used to stop with `GraphRecursionError` after 25 steps.
+
 ## 0.6.38 - 2026-10-11
 
 ### Fixed
@@ -1061,7 +1070,6 @@
 ### CI
 - The `test` job now installs `jupyterlab` (declared runtime dep) and pins
   `langgraph-stream-parser>=0.6.3` to match pyproject.
-
 
 ## 0.5.2 - 2026-06-16
 
