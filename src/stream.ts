@@ -74,6 +74,8 @@ export class TurnAccumulator {
   // The node whose text run we're currently accumulating. AG-UI streams token
   // deltas, so consecutive same-node text chunks are one message (appended).
   private textNode: string | undefined;
+  // The `message_id` of the current text run's frames, when they carry one.
+  private textMessageId: unknown;
   // Text or a tool call arrived since the last reasoning delta.
   private reasoningInterrupted = false;
 
@@ -102,18 +104,25 @@ export class TurnAccumulator {
     }
 
     // AG-UI streams token DELTAS (not cumulative per-message chunks), so
-    // consecutive same-node deltas accumulate into one intermediate. A normal reply
-    // then renders as a single clean block, while a node/tool break starts a new
-    // intermediate (preserving the grey multi-step display).
+    // consecutive deltas of one message accumulate into one intermediate. A normal
+    // reply then renders as a single clean block, while a node/tool break starts a new
+    // intermediate (preserving the grey multi-step display). A change of `message_id`
+    // is a break too: two AIMessages of one node are two runs, the rule core and the
+    // other surfaces apply (langstage-core#200).
     if (frame.chunk) {
       const node = frame.node ?? '';
+      const messageId = frame.message_id;
       const runs = this.turn.intermediates;
-      if (this.textNode === node && runs.length > 0) {
+      const sameRun =
+        this.textNode === node &&
+        (messageId === undefined || messageId === null || messageId === this.textMessageId);
+      if (sameRun && runs.length > 0) {
         runs[runs.length - 1] += frame.chunk;
       } else {
         runs.push(frame.chunk);
         this.textNode = node;
       }
+      this.textMessageId = messageId;
       this.turn.content = runs[runs.length - 1];
       this.reasoningInterrupted = true;
     }

@@ -363,3 +363,113 @@ test('a failed resume request shows its status', async ({ page }) => {
       .filter({ hasText: 'agent crashed' })
   ).toBeVisible({ timeout: 15_000 });
 });
+
+// ── gh #173: the card shows the question and can answer it ──────────────────────────
+//
+// The card offered only approve/reject/edit and never showed the question, so an agent
+// asking the user something (allowed_decisions includes `respond`) couldn't be answered.
+
+const askInterrupt = (allowed: string[], request: unknown = {
+  action: 'ask_user',
+  args: { question: 'What should I call you?' }
+}) => [
+  {
+    status: 'interrupt',
+    interrupt: { action_requests: [request], review_configs: [], allowed_decisions: allowed }
+  },
+  { status: 'complete', outcome: 'interrupted' }
+];
+
+test('the card shows the question and sends a respond decision', async ({ page }) => {
+  await stubStream(page, CHAT_URL, askInterrupt(['respond', 'approve']));
+  const resumeBodies: any[] = [];
+  await page.route(RESUME_URL, route => {
+    resumeBodies.push(route.request().postDataJSON());
+    return route.fulfill({
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+      body: [
+        { status: 'streaming', chunk: 'Nice to meet you, Kedar.', node: 'agent', message_id: 'm2' },
+        { status: 'complete', outcome: 'complete' }
+      ]
+        .map(f => `data: ${JSON.stringify(f)}\n\n`)
+        .join('')
+    });
+  });
+  await sendInHealthyChat(page, 'ask me');
+
+  const card = page.locator('.deepagents-interrupt');
+  await expect(card).toBeVisible({ timeout: 15_000 });
+  await expect(card.locator('.deepagents-interrupt-question')).toHaveText(
+    'What should I call you?'
+  );
+  const respond = card.locator('.deepagents-respond-btn');
+  await expect(respond).toBeDisabled();
+  const field = card.locator('.deepagents-interrupt-response');
+  await field.fill('   ');
+  await expect(respond).toBeDisabled();
+  await field.fill('Kedar');
+  await expect(respond).toBeEnabled();
+  await respond.click();
+
+  await expect(
+    page.locator('.deepagents-message-assistant').filter({ hasText: 'Nice to meet you, Kedar.' })
+  ).toBeVisible({ timeout: 15_000 });
+  expect(resumeBodies).toHaveLength(1);
+  expect(resumeBodies[0].decisions).toEqual([{ type: 'respond', message: 'Kedar' }]);
+  // Answered: the card's controls are off.
+  await expect(field).toBeDisabled();
+  await expect(card.locator('.deepagents-approve-btn')).toBeDisabled();
+});
+
+test('no respond control when the interrupt does not allow it', async ({ page }) => {
+  await stubStream(
+    page,
+    CHAT_URL,
+    askInterrupt(['approve', 'reject'], {
+      name: 'write_file',
+      args: { path: 'a.txt' },
+      description: 'Write a.txt'
+    })
+  );
+  await sendInHealthyChat(page, 'write it');
+
+  const card = page.locator('.deepagents-interrupt');
+  await expect(card).toBeVisible({ timeout: 15_000 });
+  await expect(card.locator('.deepagents-interrupt-description strong')).toHaveText('write_file');
+  await expect(card.locator('.deepagents-interrupt-args')).toContainText('a.txt');
+  await expect(card.locator('.deepagents-approve-btn')).toBeVisible();
+  await expect(card.locator('.deepagents-reject-btn')).toBeVisible();
+  await expect(card.locator('.deepagents-interrupt-response')).toHaveCount(0);
+  await expect(card.locator('.deepagents-respond-btn')).toHaveCount(0);
+});
+
+test('a plain-string request shows as its text', async ({ page }) => {
+  await stubStream(page, CHAT_URL, askInterrupt(['respond'], 'Which branch should I use?'));
+  await sendInHealthyChat(page, 'ask me');
+
+  const card = page.locator('.deepagents-interrupt');
+  await expect(card).toBeVisible({ timeout: 15_000 });
+  await expect(card.locator('.deepagents-interrupt-question')).toHaveText(
+    'Which branch should I use?'
+  );
+  await expect(card.locator('.deepagents-interrupt-description strong')).toHaveCount(0);
+  await expect(card.locator('.deepagents-respond-btn')).toBeVisible();
+});
+
+test('an answered card stays off when a later interrupt arrives', async ({ page }) => {
+  await stubStream(page, CHAT_URL, askInterrupt(['approve']));
+  await stubStream(
+    page,
+    RESUME_URL,
+    askInterrupt(['approve'], { action: 'confirm', args: { question: 'Proceed?' } })
+  );
+  await sendInHealthyChat(page, 'ask me');
+
+  const cards = page.locator('.deepagents-interrupt');
+  await expect(cards).toHaveCount(1, { timeout: 15_000 });
+  await cards.first().locator('.deepagents-approve-btn').click();
+  await expect(cards).toHaveCount(2, { timeout: 15_000 });
+  await expect(cards.nth(1).locator('.deepagents-approve-btn')).toBeEnabled();
+  await expect(cards.first().locator('.deepagents-approve-btn')).toBeDisabled();
+});

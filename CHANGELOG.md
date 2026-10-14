@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.6.40 - 2026-10-14
+
+### Fixed
+- **The sidebar's approval card can answer an agent's question (gh #173).** When an
+  interrupt allows the `respond` decision (the agent is asking the user something, like
+  the demo agent's `ask_user`), the card showed only `Tool: ask_user` and an Approve
+  button: no question and no way to answer. It now shows the question (`args.question`),
+  a text field and a **Respond** button that resumes with
+  `{"type": "respond", "message": ...}`, one decision per action request, the same as the
+  web app since dkedar7/langstage#195. Respond is disabled while the field is blank. The
+  card also shows a request's other args, and a plain-string `interrupt("...")` request
+  as its text. Each control still appears only when `allowed_decisions` permits it.
+- An answered approval card stays disabled. Before, a second interrupt in the same chat
+  turned the first card's buttons back on, and clicking them resumed the new interrupt.
+- Two assistant messages from one node no longer run together into one paragraph. The
+  sidebar now starts a new text run when a chunk's `message_id` changes, the rule
+  langstage-core and the other surfaces apply (langstage-core#200).
+
 ## 0.6.39 - 2026-10-11
 
 ### Changed

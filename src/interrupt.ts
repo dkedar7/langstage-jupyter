@@ -11,7 +11,8 @@
  * - a single `interrupt({...})` object, nested:
  *   `{"action_request": {"action", "args"}, "description"}`.
  *
- * An older keyed-dict request may name a `tool`.
+ * An older keyed-dict request may name a `tool`. A bare `interrupt("...")` value
+ * arrives as a plain string: the text is the whole request (gh #173).
  */
 
 /** One row of the approval card: the action the agent wants to take. */
@@ -19,6 +20,10 @@ export interface ActionSummary {
   name: string;
   description?: string;
   args?: unknown;
+  /** What the agent asked, from `args.question` (e.g. the demo's `ask_user`). */
+  question?: string;
+  /** A plain-string request's text, shown as-is with no action name. */
+  text?: string;
 }
 
 export const UNNAMED_ACTION = 'an action';
@@ -27,6 +32,12 @@ export function summarizeActions(actionRequests: unknown): ActionSummary[] {
   const requests = Array.isArray(actionRequests) ? actionRequests : [];
   const out: ActionSummary[] = [];
   for (const raw of requests) {
+    if (typeof raw === 'string') {
+      if (raw) {
+        out.push({ name: '', text: raw });
+      }
+      continue;
+    }
     if (!raw || typeof raw !== 'object') {
       continue;
     }
@@ -38,12 +49,53 @@ export function summarizeActions(actionRequests: unknown): ActionSummary[] {
     const src = nested ?? req;
     const name = src.name ?? src.action ?? req.tool ?? UNNAMED_ACTION;
     const description = req.description ?? src.description;
+    const args = src.args;
+    const question =
+      args && typeof args === 'object' ? (args as Record<string, unknown>).question : undefined;
     out.push({
       name: String(name),
       description:
         typeof description === 'string' && description ? description : undefined,
-      args: src.args
+      args,
+      question: typeof question === 'string' && question ? question : undefined
     });
   }
   return out.length ? out : [{ name: UNNAMED_ACTION }];
+}
+
+/**
+ * The args worth showing on the card under the question: everything but the
+ * `question` itself, which the card already shows as text. `undefined` when nothing
+ * is left.
+ */
+export function displayArgs(action: ActionSummary): Record<string, unknown> | undefined {
+  const args = action.args;
+  if (!args || typeof args !== 'object' || Array.isArray(args)) {
+    return undefined;
+  }
+  const rest: Record<string, unknown> = { ...(args as Record<string, unknown>) };
+  if (action.question !== undefined) {
+    delete rest.question;
+  }
+  return Object.keys(rest).length ? rest : undefined;
+}
+
+/** The decision that answers the agent's question with the user's text (gh #173). */
+export interface RespondDecision {
+  type: 'respond';
+  message: string;
+}
+
+/**
+ * Answer an interrupt with `text`: one `respond` decision per action request (a
+ * single one when the interrupt lists none), the shape the web app sends
+ * (langstage#195). Blank text answers nothing, so it returns no decisions.
+ */
+export function respondDecisions(actionRequests: unknown, text: string): RespondDecision[] {
+  const message = text.trim();
+  if (!message) {
+    return [];
+  }
+  const count = Array.isArray(actionRequests) && actionRequests.length ? actionRequests.length : 1;
+  return Array.from({ length: count }, () => ({ type: 'respond' as const, message }));
 }

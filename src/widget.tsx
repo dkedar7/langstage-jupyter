@@ -5,7 +5,7 @@ import { IFileBrowserFactory } from '@jupyterlab/filebrowser';
 import { NotebookPanel } from '@jupyterlab/notebook';
 import { postStream, requestAPI } from './handler';
 import { AgentWriteTracker, reloadOpenDocument } from './reload';
-import { summarizeActions } from './interrupt';
+import { displayArgs, respondDecisions, summarizeActions } from './interrupt';
 import { SSELineBuffer, TodoItem, ToolCall, TurnAccumulator } from './stream';
 import ReactMarkdown from 'react-markdown';
 import { Send, RotateCw, Trash2, Square, Circle, CheckCircle2, ArrowRight } from 'lucide-react';
@@ -64,10 +64,144 @@ function allowedDecisions(interrupt?: InterruptData): string[] {
  * Decision interface
  */
 interface Decision {
-  type: 'approve' | 'reject' | 'edit';
+  type: 'approve' | 'reject' | 'edit' | 'respond';
   args?: Record<string, any>;
   explanation?: string;
+  /** A `respond` decision's answer to the agent's question (gh #173). */
+  message?: string;
 }
+
+/**
+ * Interrupt card props
+ */
+interface InterruptCardProps {
+  interrupt: InterruptData;
+  /** False once the interrupt is answered, or while a turn is running. */
+  active: boolean;
+  onDecide: (decisions: Decision[]) => void;
+}
+
+/**
+ * The approval card for one interrupt: what the agent asks, and a control for each
+ * decision the interrupt allows. When `respond` is allowed (the agent asked the user
+ * something), it shows the question and a text field with a Respond button, like the
+ * web app (gh #173, langstage#195).
+ */
+const InterruptCard: React.FC<InterruptCardProps> = ({ interrupt, active, onDecide }) => {
+  const [response, setResponse] = useState('');
+  const allowed = allowedDecisions(interrupt);
+  const actions = summarizeActions(interrupt.action_requests);
+
+  const handleRespond = () => {
+    const decisions = respondDecisions(interrupt.action_requests, response);
+    if (decisions.length) {
+      onDecide(decisions);
+    }
+  };
+
+  return (
+    <div className="deepagents-interrupt">
+      <div className="deepagents-interrupt-header">
+        Approval required
+      </div>
+      {actions.map((action, idx) => {
+        const args = displayArgs(action);
+        return (
+          <div key={idx} className="deepagents-interrupt-description">
+            {action.text !== undefined ? (
+              <div className="deepagents-interrupt-question">{action.text}</div>
+            ) : (
+              <>
+                Tool: <strong>{action.name}</strong>
+                {action.description && (
+                  <div className="deepagents-interrupt-action-description">
+                    {action.description}
+                  </div>
+                )}
+                {action.question && (
+                  <div className="deepagents-interrupt-question">{action.question}</div>
+                )}
+                {args && (
+                  <pre className="deepagents-interrupt-args">
+                    {JSON.stringify(args, null, 2)}
+                  </pre>
+                )}
+              </>
+            )}
+          </div>
+        );
+      })}
+      {allowed.includes('respond') && (
+        <form
+          className="deepagents-interrupt-respond"
+          onSubmit={e => {
+            e.preventDefault();
+            handleRespond();
+          }}
+        >
+          <input
+            type="text"
+            className="deepagents-interrupt-response"
+            aria-label="Your response"
+            placeholder="Type your response..."
+            value={response}
+            onChange={e => setResponse(e.target.value)}
+            disabled={!active}
+          />
+          <button
+            type="submit"
+            className="deepagents-decision-btn deepagents-respond-btn"
+            disabled={!active || !response.trim()}
+          >
+            Respond
+          </button>
+        </form>
+      )}
+      <div className="deepagents-action-decisions">
+        {allowed.includes('approve') && (
+          <button
+            className="deepagents-decision-btn deepagents-approve-btn"
+            onClick={() => onDecide([{ type: 'approve' }])}
+            disabled={!active}
+          >
+            Approve
+          </button>
+        )}
+        {allowed.includes('reject') && (
+          <button
+            className="deepagents-decision-btn deepagents-reject-btn"
+            onClick={() => onDecide([{ type: 'reject' }])}
+            disabled={!active}
+          >
+            Reject
+          </button>
+        )}
+        {allowed.includes('edit') && (
+          <button
+            className="deepagents-decision-btn deepagents-edit-btn"
+            onClick={() => {
+              const newArgsStr = prompt(
+                'Edit arguments (JSON):',
+                JSON.stringify(actions[0].args ?? {}, null, 2)
+              );
+              if (newArgsStr) {
+                try {
+                  const newArgs = JSON.parse(newArgsStr);
+                  onDecide([{ type: 'edit', args: newArgs }]);
+                } catch (e) {
+                  alert('Invalid JSON');
+                }
+              }
+            }}
+            disabled={!active}
+          >
+            Edit
+          </button>
+        )}
+      </div>
+    </div>
+  );
+};
 
 /**
  * Message interface for chat messages
@@ -105,7 +239,9 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
   const [agentStatusMessage, setAgentStatusMessage] = useState<string>('');
   const [agentName, setAgentName] = useState<string>('LangStage');
   const [threadId, setThreadId] = useState<string>(() => crypto.randomUUID());
-  const [awaitingDecision, setAwaitingDecision] = useState(false);
+  // The assistant message whose interrupt awaits a decision. Only that card's
+  // controls are live, so an answered card can't resume a later interrupt (gh #173).
+  const [pendingInterruptId, setPendingInterruptId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -279,7 +415,7 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
         upsertAssistantMessage(assistantMessageId, turnFields());
       } else if (data.status === 'interrupt') {
         // Show the decision UI.
-        setAwaitingDecision(true);
+        setPendingInterruptId(assistantMessageId);
         upsertAssistantMessage(assistantMessageId, { interrupt: data.interrupt });
       } else if (data.status === 'complete') {
         // The message keeps its intermediates, reasoning and tool calls.
@@ -456,7 +592,7 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
   };
 
   const handleResumeFromInterrupt = async (decisions: Decision[]) => {
-    setAwaitingDecision(false);
+    setPendingInterruptId(null);
     setIsLoading(true);
     const assistantMessageId = (Date.now() + 1).toString();
 
@@ -512,6 +648,7 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
 
   const clearChat = () => {
     setMessages([]);
+    setPendingInterruptId(null);
     // Generate new thread_id for fresh conversation
     setThreadId(crypto.randomUUID());
   };
@@ -635,77 +772,11 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
                   </div>
                 )}
                 {message.interrupt && (
-                  <div className="deepagents-interrupt">
-                    <div className="deepagents-interrupt-header">
-                      Approval required
-                    </div>
-                    {summarizeActions(message.interrupt.action_requests).map((action, idx) => (
-                      <div key={idx} className="deepagents-interrupt-description">
-                        Tool: <strong>{action.name}</strong>
-                        {action.description && (
-                          <div className="deepagents-interrupt-action-description">
-                            {action.description}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                    <div className="deepagents-action-decisions">
-                      {allowedDecisions(message.interrupt).includes('approve') && (
-                        <button
-                          className="deepagents-decision-btn deepagents-approve-btn"
-                          onClick={() => {
-                            const decisions: Decision[] = [{ type: 'approve' }];
-                            handleResumeFromInterrupt(decisions);
-                          }}
-                          disabled={!awaitingDecision || isLoading}
-                        >
-                          Approve
-                        </button>
-                      )}
-                      {allowedDecisions(message.interrupt).includes('reject') && (
-                        <button
-                          className="deepagents-decision-btn deepagents-reject-btn"
-                          onClick={() => {
-                            const decisions: Decision[] = [{ type: 'reject' }];
-                            handleResumeFromInterrupt(decisions);
-                          }}
-                          disabled={!awaitingDecision || isLoading}
-                        >
-                          Reject
-                        </button>
-                      )}
-                      {allowedDecisions(message.interrupt).includes('edit') && (
-                        <button
-                          className="deepagents-decision-btn deepagents-edit-btn"
-                          onClick={() => {
-                            const newArgsStr = prompt(
-                              'Edit arguments (JSON):',
-                              JSON.stringify(
-                                summarizeActions(message.interrupt!.action_requests)[0].args ?? {},
-                                null,
-                                2
-                              )
-                            );
-                            if (newArgsStr) {
-                              try {
-                                const newArgs = JSON.parse(newArgsStr);
-                                const decisions: Decision[] = [{
-                                  type: 'edit',
-                                  args: newArgs
-                                }];
-                                handleResumeFromInterrupt(decisions);
-                              } catch (e) {
-                                alert('Invalid JSON');
-                              }
-                            }
-                          }}
-                          disabled={!awaitingDecision || isLoading}
-                        >
-                          Edit
-                        </button>
-                      )}
-                    </div>
-                  </div>
+                  <InterruptCard
+                    interrupt={message.interrupt}
+                    active={pendingInterruptId === message.id && !isLoading}
+                    onDecide={handleResumeFromInterrupt}
+                  />
                 )}
                 {message.role === 'assistant' ? (
                   <ReactMarkdown>{message.content}</ReactMarkdown>

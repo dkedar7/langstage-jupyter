@@ -893,6 +893,58 @@
   line-height: var(--da-leading-normal);
 }
 
+/* What the agent asked (gh #173) */
+.deepagents-interrupt-question {
+  margin-top: 6px;
+  color: var(--da-foreground);
+  white-space: pre-wrap;
+}
+
+.deepagents-interrupt-args {
+  margin: 8px 0 0 0;
+  padding: 8px 10px;
+  background: var(--da-surface-elevated);
+  border: 1px solid var(--da-border);
+  border-radius: var(--da-radius-md);
+  font-size: var(--da-text-sm);
+  font-family: var(--da-font-mono);
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--da-foreground);
+}
+
+.deepagents-interrupt-respond {
+  display: flex;
+  gap: 10px;
+  margin: 0 0 10px 0;
+}
+
+.deepagents-interrupt-response {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--da-border-strong);
+  border-radius: var(--da-radius-md);
+  background: var(--da-surface);
+  color: var(--da-foreground);
+  font-family: var(--da-font-sans);
+  font-size: var(--da-text-base);
+  outline: none;
+}
+
+.deepagents-interrupt-response:focus {
+  border-color: var(--da-primary);
+}
+
+.deepagents-interrupt-response::placeholder {
+  color: var(--da-foreground-subtle);
+}
+
+.deepagents-respond-btn:hover:not(:disabled) {
+  border-color: var(--da-primary);
+  color: var(--da-primary);
+}
+
 .deepagents-action-decisions {
   display: flex;
   gap: 10px;
