@@ -29,6 +29,7 @@ import functools
 import os
 import queue
 import re
+import secrets
 import time
 import urllib.parse
 from typing import Annotated, Optional
@@ -90,8 +91,29 @@ def _tool_errors(fn):
 # ── the two I/O primitives ───────────────────────────────────────────
 
 
+#: The XSRF token every API call presents alongside the Jupyter token (gh #176).
+_XSRF = secrets.token_hex(16)
+
+
+def auth_headers(token: str) -> dict:
+    """Headers that authenticate a contents/sessions/kernels API call.
+
+    ``Authorization`` alone used to be enough, because Jupyter Server skips its XSRF
+    check for a token-authenticated request. With auth turned off
+    (``--IdentityProvider.token=``) nothing is token-authenticated, so every PUT and
+    POST was refused with 403 ``'_xsrf' argument missing`` while GETs passed
+    (gh #176). Tornado's check only needs the ``X-XSRFToken`` header to match the
+    ``_xsrf`` cookie, so every call sends a matching pair; a server that does check
+    the token ignores it.
+    """
+    headers = {"X-XSRFToken": _XSRF, "Cookie": f"_xsrf={_XSRF}"}
+    if token:
+        headers["Authorization"] = f"token {token}"
+    return headers
+
+
 def _headers() -> dict:
-    return {"Authorization": f"token {JUPYTER_TOKEN}"} if JUPYTER_TOKEN else {}
+    return auth_headers(JUPYTER_TOKEN)
 
 
 def _norm(notebook_path: str) -> str:
@@ -131,7 +153,12 @@ def _contents_url(notebook_path: str) -> str:
 def _refused(resp, action: str, notebook_path: str) -> ServerRefused:
     """The error for a response that is neither success nor a plain 404."""
     hint = ""
-    if resp.status_code in (401, 403):
+    if resp.status_code == 403 and "_xsrf" in (getattr(resp, "text", "") or ""):
+        hint = (
+            " The server refused the request's XSRF check; set LANGSTAGE_JUPYTER_TOKEN "
+            "to the server's token, or launch JupyterLab with one."
+        )
+    elif resp.status_code in (401, 403):
         hint = (
             " The token was rejected: check that LANGSTAGE_JUPYTER_TOKEN matches the "
             "running server's token (`langstage-jupyter --check-connection` verifies it)."

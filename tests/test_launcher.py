@@ -1283,6 +1283,14 @@ class TestConnectionVerdict:
         assert "unreachable" in msg
         assert "LANGSTAGE_JUPYTER_SERVER_URL" in msg
 
+    def test_auth_off_and_a_refused_write_are_named(self):
+        code, msg = _connection_verdict("http://localhost:8888", status=200, auth_off=True,
+                                        write_status=404)
+        assert code == 0 and "authentication is off" in msg
+        # A GET passed but a write was refused: notebook edits would all fail (gh #176).
+        code, msg = _connection_verdict("http://localhost:8888", status=200, write_status=403)
+        assert code == 1 and "refused a write" in msg
+
     def test_unexpected_status_fails(self):
         code, msg = _connection_verdict("http://localhost:8888", status=500)
         assert code == 1 and "500" in msg

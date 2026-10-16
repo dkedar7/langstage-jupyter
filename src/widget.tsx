@@ -5,7 +5,13 @@ import { IFileBrowserFactory } from '@jupyterlab/filebrowser';
 import { NotebookPanel } from '@jupyterlab/notebook';
 import { postStream, requestAPI } from './handler';
 import { AgentWriteTracker, reloadOpenDocument } from './reload';
-import { displayArgs, respondDecisions, summarizeActions } from './interrupt';
+import {
+  displayArgs,
+  editDecisions,
+  respondDecisions,
+  summarizeActions,
+  uniformDecisions
+} from './interrupt';
 import { SSELineBuffer, TodoItem, ToolCall, TurnAccumulator } from './stream';
 import ReactMarkdown from 'react-markdown';
 import { Send, RotateCw, Trash2, Square, Circle, CheckCircle2, ArrowRight } from 'lucide-react';
@@ -66,6 +72,8 @@ function allowedDecisions(interrupt?: InterruptData): string[] {
 interface Decision {
   type: 'approve' | 'reject' | 'edit' | 'respond';
   args?: Record<string, any>;
+  /** An `edit` decision's replacement call (gh #175). */
+  edited_action?: { name: string; args: Record<string, unknown> };
   explanation?: string;
   /** A `respond` decision's answer to the agent's question (gh #173). */
   message?: string;
@@ -91,6 +99,23 @@ const InterruptCard: React.FC<InterruptCardProps> = ({ interrupt, active, onDeci
   const [response, setResponse] = useState('');
   const allowed = allowedDecisions(interrupt);
   const actions = summarizeActions(interrupt.action_requests);
+
+  // Edit request `idx`'s args in a prompt, then approve the rest (gh #175).
+  const handleEdit = (idx: number) => {
+    const newArgsStr = prompt(
+      'Edit arguments (JSON):',
+      JSON.stringify(actions[idx]?.args ?? {}, null, 2)
+    );
+    if (newArgsStr) {
+      try {
+        onDecide(editDecisions(interrupt.action_requests, idx, JSON.parse(newArgsStr)));
+      } catch (e) {
+        alert('Invalid JSON');
+      }
+    }
+  };
+  // With several requests, each row gets its own Edit button.
+  const editPerAction = allowed.includes('edit') && actions.length > 1;
 
   const handleRespond = () => {
     const decisions = respondDecisions(interrupt.action_requests, response);
@@ -125,6 +150,15 @@ const InterruptCard: React.FC<InterruptCardProps> = ({ interrupt, active, onDeci
                   <pre className="deepagents-interrupt-args">
                     {JSON.stringify(args, null, 2)}
                   </pre>
+                )}
+                {editPerAction && (
+                  <button
+                    className="deepagents-decision-btn deepagents-edit-btn"
+                    onClick={() => handleEdit(idx)}
+                    disabled={!active}
+                  >
+                    Edit
+                  </button>
                 )}
               </>
             )}
@@ -161,7 +195,7 @@ const InterruptCard: React.FC<InterruptCardProps> = ({ interrupt, active, onDeci
         {allowed.includes('approve') && (
           <button
             className="deepagents-decision-btn deepagents-approve-btn"
-            onClick={() => onDecide([{ type: 'approve' }])}
+            onClick={() => onDecide(uniformDecisions(interrupt.action_requests, 'approve'))}
             disabled={!active}
           >
             Approve
@@ -170,29 +204,16 @@ const InterruptCard: React.FC<InterruptCardProps> = ({ interrupt, active, onDeci
         {allowed.includes('reject') && (
           <button
             className="deepagents-decision-btn deepagents-reject-btn"
-            onClick={() => onDecide([{ type: 'reject' }])}
+            onClick={() => onDecide(uniformDecisions(interrupt.action_requests, 'reject'))}
             disabled={!active}
           >
             Reject
           </button>
         )}
-        {allowed.includes('edit') && (
+        {allowed.includes('edit') && !editPerAction && (
           <button
             className="deepagents-decision-btn deepagents-edit-btn"
-            onClick={() => {
-              const newArgsStr = prompt(
-                'Edit arguments (JSON):',
-                JSON.stringify(actions[0].args ?? {}, null, 2)
-              );
-              if (newArgsStr) {
-                try {
-                  const newArgs = JSON.parse(newArgsStr);
-                  onDecide([{ type: 'edit', args: newArgs }]);
-                } catch (e) {
-                  alert('Invalid JSON');
-                }
-              }
-            }}
+            onClick={() => handleEdit(0)}
             disabled={!active}
           >
             Edit

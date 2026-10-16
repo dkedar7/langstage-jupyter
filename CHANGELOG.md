@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.6.41 - 2026-10-15
+
+### Fixed
+- **The notebook tools work when JupyterLab runs with auth turned off (gh #176).** With
+  `--IdentityProvider.token=` (an empty token), every tool that writes a notebook or
+  starts a kernel failed with HTTP 403 `'_xsrf' argument missing from POST`, while reads
+  still worked. Jupyter Server skips its XSRF check only for token-authenticated
+  requests, and with auth off nothing is. Every API call now also sends a matching
+  `X-XSRFToken` header and `_xsrf` cookie, so `create_notebook`, `insert_code_cell` and
+  `execute_cell` work against such a server. A 403 from the XSRF check no longer says
+  the token was rejected.
+- `--check-connection` says when the server has authentication turned off, and it now
+  tries a harmless write as well as a read: a server that accepts reads but refuses
+  writes fails the check instead of reporting `token accepted`.
+- **The approval card answers every tool call an interrupt asks about (gh #175).**
+  Approve and Reject sent one decision even when the interrupt reviewed several tool
+  calls at once, and HumanInTheLoopMiddleware raised `Number of human decisions (1) does
+  not match number of hanging tool calls`. They now send one decision per action
+  request, as the web app does. With several requests each one gets its own Edit
+  button; editing one approves the rest. An edit is sent as
+  `{"type": "edit", "edited_action": {"name", "args"}}`, the shape the middleware reads,
+  so Edit works with HumanInTheLoopMiddleware too (it used to send only `args`, which is
+  still included for custom `interrupt()` graphs).
+
 ## 0.6.40 - 2026-10-14
 
 ### Fixed

@@ -832,3 +832,31 @@ def test_create_notebook_with_a_hash_reaches_the_full_path(monkeypatch, ws):
     monkeypatch.setattr(nt.requests, "put", lambda url, **kw: seen.append(url) or Created())
     assert nt.create_notebook("Experiment #3.ipynb").startswith("Created")
     assert seen and all(u.endswith("/api/contents/Experiment%20%233.ipynb") for u in seen)
+
+
+# ── auth turned off: writes pass the XSRF check (gh #176) ────────────
+
+
+@pytest.mark.parametrize("token", ["", "tok"])
+def test_every_call_sends_a_matching_xsrf_pair(monkeypatch, token):
+    # With --IdentityProvider.token= nothing is token-authenticated, so Jupyter Server
+    # applies its XSRF check and refused every PUT/POST without this pair.
+    monkeypatch.setattr(nt, "JUPYTER_TOKEN", token)
+    h = nt._headers()
+    assert h["Cookie"] == f"_xsrf={h['X-XSRFToken']}"
+    assert ("Authorization" in h) == bool(token)
+
+
+def test_an_xsrf_403_does_not_blame_the_token(monkeypatch, ws):
+    class Resp:
+        status_code = 403
+        reason = "Forbidden"
+        text = '{"message": "\'_xsrf\' argument missing from POST"}'
+
+        def json(self):
+            return {}
+
+    for verb in ("get", "put", "post"):
+        monkeypatch.setattr(nt.requests, verb, lambda url, **kw: Resp())
+    out = nt.get_notebook_state("report.ipynb")
+    assert "XSRF" in out and "token was rejected" not in out

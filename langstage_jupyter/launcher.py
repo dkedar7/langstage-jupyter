@@ -538,7 +538,8 @@ def serve_check(agent_spec=None, *, boot_timeout=45.0, turn_timeout=60.0):
 
 
 def _connection_verdict(server_url, *, status=None, server_version=None,
-                        unreachable=False, error=None):
+                        unreachable=False, error=None, auth_off=False,
+                        write_status=None):
     """Reduce a ``/api/status`` probe to ``(exit_code, message)``.
 
     Pure so the verdict logic is unit-testable without a live Jupyter (mirrors
@@ -548,6 +549,12 @@ def _connection_verdict(server_url, *, status=None, server_version=None,
     * ``status=<int>``     — the HTTP status ``/api/status`` returned (it is
       ``@web.authenticated``, so a wrong/missing token yields 403),
     * ``error=<str>``      — some other client-side failure.
+
+    With ``status=200`` two more facts refine the verdict: ``auth_off`` (the server
+    answered ``/api/status`` with no credentials at all, i.e. it was launched with
+    ``--IdentityProvider.token=``) and ``write_status`` (what a harmless write-class
+    POST returned; a GET alone passed even when every notebook write was refused,
+    gh #176).
 
     Names the two distinct failure modes the enhancement is about — server
     *unreachable* vs. token *rejected* — so triage is one glance, not a chat session.
@@ -566,6 +573,17 @@ def _connection_verdict(server_url, *, status=None, server_version=None,
         )
     if status == 200:
         suffix = f" (Jupyter Server {server_version})" if server_version else ""
+        if write_status in (401, 403):
+            return 1, (
+                f"[fail] {server_url} accepts reads but refused a write ({write_status}) "
+                "— notebook edits and kernel starts will fail. Check "
+                "LANGSTAGE_JUPYTER_TOKEN against the server's token."
+            )
+        if auth_off:
+            return 0, (
+                f"[ ok ] reached {server_url} — authentication is off on this server "
+                f"(launched with an empty token), so any token works{suffix}"
+            )
         return 0, f"[ ok ] reached {server_url} — token accepted{suffix}"
     return 1, f"[fail] {server_url} returned unexpected HTTP {status}"
 
@@ -611,12 +629,22 @@ def check_connection(*, timeout=5.0):
         )
         return 1
 
-    def _get(path):
+    from langstage_jupyter.notebook_tools import auth_headers
+
+    def _get(path, headers=None):
         req = urllib.request.Request(
             f"{server_url}{path}",
-            headers={"Authorization": f"token {token}"} if token else {},
+            headers=auth_headers(token) if headers is None else headers,
         )
         return urllib.request.urlopen(req, timeout=timeout)
+
+    def _status(fn):
+        try:
+            return fn().getcode()
+        except urllib.error.HTTPError as e:
+            return e.code
+        except Exception:  # noqa: BLE001 - these refinements never fail the check
+            return None
 
     try:
         status = _get("/api/status").getcode()
@@ -638,7 +666,20 @@ def check_connection(*, timeout=5.0):
     except Exception:  # noqa: BLE001 - version is cosmetic
         pass
 
-    code, message = _connection_verdict(server_url, status=status, server_version=version)
+    # Does the server want credentials at all? /api/status with none answers 200 only
+    # when auth is off. And can we write? Interrupting a kernel id that can't exist
+    # passes auth and the XSRF check, then 404s; a refused write is 403 (gh #176).
+    auth_off = _status(lambda: _get("/api/status", headers={})) == 200
+    probe = urllib.request.Request(
+        f"{server_url}/api/kernels/00000000-0000-0000-0000-000000000000/interrupt",
+        data=b"", method="POST", headers=auth_headers(token),
+    )
+    write_status = _status(lambda: urllib.request.urlopen(probe, timeout=timeout))
+
+    code, message = _connection_verdict(
+        server_url, status=status, server_version=version,
+        auth_off=auth_off, write_status=write_status,
+    )
     print(message)
     return code
 

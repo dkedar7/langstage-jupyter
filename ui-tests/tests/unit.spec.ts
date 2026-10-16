@@ -1,6 +1,12 @@
 import { expect, test } from '@playwright/test';
 import { apiUrl, requestFailedMessage } from '../../src/handler';
-import { displayArgs, respondDecisions, summarizeActions } from '../../src/interrupt';
+import {
+  displayArgs,
+  editDecisions,
+  respondDecisions,
+  summarizeActions,
+  uniformDecisions
+} from '../../src/interrupt';
 import { SSELineBuffer, TurnAccumulator } from '../../src/stream';
 
 /**
@@ -165,5 +171,32 @@ test.describe('respondDecisions (gh #173)', () => {
 
   test('blank text answers nothing', () => {
     expect(respondDecisions([{ action: 'a' }], '   ')).toEqual([]);
+  });
+});
+
+test.describe('approve, reject and edit decisions (gh #175)', () => {
+  const two = [
+    { name: 'write_file', args: { path: 'a.txt' } },
+    { name: 'execute', args: { command: 'ls' } }
+  ];
+
+  test('approve and reject answer every action request', () => {
+    expect(uniformDecisions(two, 'approve')).toEqual([{ type: 'approve' }, { type: 'approve' }]);
+    expect(uniformDecisions(two, 'reject')).toEqual([{ type: 'reject' }, { type: 'reject' }]);
+  });
+
+  test('a single decision when the interrupt lists no requests', () => {
+    expect(uniformDecisions([], 'approve')).toEqual([{ type: 'approve' }]);
+  });
+
+  test('edit replaces one request and approves the rest', () => {
+    expect(editDecisions(two, 1, { command: 'pwd' })).toEqual([
+      { type: 'approve' },
+      {
+        type: 'edit',
+        edited_action: { name: 'execute', args: { command: 'pwd' } },
+        args: { command: 'pwd' }
+      }
+    ]);
   });
 });

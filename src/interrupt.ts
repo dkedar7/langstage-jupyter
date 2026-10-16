@@ -96,6 +96,49 @@ export function respondDecisions(actionRequests: unknown, text: string): Respond
   if (!message) {
     return [];
   }
-  const count = Array.isArray(actionRequests) && actionRequests.length ? actionRequests.length : 1;
-  return Array.from({ length: count }, () => ({ type: 'respond' as const, message }));
+  return Array.from({ length: requestCount(actionRequests) }, () => ({
+    type: 'respond' as const,
+    message
+  }));
+}
+
+/** An approve, reject or edit decision for one action request (gh #175). */
+export interface ActionDecision {
+  type: 'approve' | 'reject' | 'edit';
+  /** An `edit` decision's replacement call, the shape HumanInTheLoopMiddleware reads. */
+  edited_action?: { name: string; args: Record<string, unknown> };
+  /** The same edited args, for a custom `interrupt()` graph that reads them here. */
+  args?: Record<string, unknown>;
+}
+
+function requestCount(actionRequests: unknown): number {
+  return Array.isArray(actionRequests) && actionRequests.length ? actionRequests.length : 1;
+}
+
+/**
+ * Approve or reject everything the interrupt asks about: one decision per action
+ * request (a single one when it lists none). HumanInTheLoopMiddleware raises when an
+ * interrupt reviewing several tool calls gets fewer decisions than requests; the web
+ * app sends one per request (gh #175).
+ */
+export function uniformDecisions(
+  actionRequests: unknown,
+  type: 'approve' | 'reject'
+): ActionDecision[] {
+  return Array.from({ length: requestCount(actionRequests) }, () => ({ type }));
+}
+
+/**
+ * Edit request `index` with `args` and approve the rest, as the web app's dialog does
+ * (gh #175).
+ */
+export function editDecisions(
+  actionRequests: unknown,
+  index: number,
+  args: Record<string, unknown>
+): ActionDecision[] {
+  const name = summarizeActions(actionRequests)[index]?.name ?? UNNAMED_ACTION;
+  return Array.from({ length: requestCount(actionRequests) }, (_, i) =>
+    i === index ? { type: 'edit' as const, edited_action: { name, args }, args } : { type: 'approve' as const }
+  );
 }
