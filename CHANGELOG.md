@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.42 - 2026-10-19
+
+### Fixed
+- **An empty `-a` value is a usage error (gh #178).** `-a ""`, `-a=` and `--agent=` (for
+  example `-a "$AGENT"` with `AGENT` unset) skipped the malformed-spec check, so the
+  launcher quietly ran the `LANGSTAGE_AGENT_SPEC` / `langstage.toml` / default agent while
+  `--show-config` reported `agent_spec = '' [override]`. They now exit 64 with core's
+  "Invalid agent spec ''" message, the same as `-a "  "` or a colon-less spec. An empty
+  `--ask ""` is still a valid (empty) prompt, as documented.
+
 ## 0.6.41 - 2026-10-15
 
 ### Fixed
