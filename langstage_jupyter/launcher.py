@@ -186,6 +186,10 @@ def extract_agent_args(args):
             continue
         if arg.startswith(("--agent=", "-a=")):
             agent_spec = arg.split("=", 1)[1]
+            if not agent_spec:
+                raise LauncherArgError(
+                    "-a/--agent needs an agent spec (module:attr); its value cannot be empty."
+                )
             i += 1
             continue
         if arg == "--demo":

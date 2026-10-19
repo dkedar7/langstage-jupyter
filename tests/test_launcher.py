@@ -14,6 +14,7 @@ from langstage_jupyter.launcher import (
     ask,
     check_connection,
     extract_agent_args,
+    LauncherArgError,
     find_available_port,
     generate_token,
     main,
@@ -39,6 +40,11 @@ class TestExtractAgentArgs:
         spec, _, rest = extract_agent_args(["--agent=pkg.mod:g"])
         assert spec == "pkg.mod:g"
         assert rest == []
+
+    @pytest.mark.parametrize("flag", ["-a=", "--agent="])
+    def test_equals_form_rejects_empty_agent_spec(self, flag):
+        with pytest.raises(LauncherArgError, match="cannot be empty"):
+            extract_agent_args([flag])
 
     def test_demo_flag(self):
         spec, demo, rest = extract_agent_args(["--demo", "--port", "9000"])
@@ -67,6 +73,13 @@ class TestMainAgentWiring:
             main()
         calls["exit_code"] = exc.value.code
         return calls
+
+    @pytest.mark.parametrize("flag", ["-a=", "--agent="])
+    def test_empty_equals_agent_is_usage_error(self, monkeypatch, flag):
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", flag])
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 64
 
     def test_demo_sets_stub_spec(self, monkeypatch):
         calls = self._run_main(["--demo", "--no-browser"], monkeypatch)

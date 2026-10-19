@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- Empty equals-form agent overrides (`-a=` / `--agent=`) now fail as usage errors instead of being ignored and falling back to the configured or default agent.
+
 ## 0.6.41 - 2026-10-15
 
 ### Fixed
