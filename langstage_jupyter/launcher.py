@@ -936,11 +936,13 @@ def main():
     if demo:
         agent_spec = DEMO_AGENT_SPEC
     # Which launcher flag chose the agent, for --show-config's source column (gh #121).
-    agent_flag = "--demo" if demo else ("-a/--agent" if agent_spec else None)
-    if agent_spec:
+    agent_flag = "--demo" if demo else ("-a/--agent" if agent_spec is not None else None)
+    if agent_spec is not None:
         # Reject a malformed -a up front (colon-less 'my_agent.py', empty object name) with
         # core's own message, so --verify / --ask / --serve-check / the launch fail cleanly
-        # instead of silently running the default agent (gh #151).
+        # instead of silently running the default agent (gh #151). An empty value
+        # (`-a ""`, `-a=`, e.g. an unset "$AGENT") is checked too: it used to skip this and
+        # fall back to the env / toml / default agent (gh #178).
         from langstage_core.host import parse_agent_spec
 
         try:
