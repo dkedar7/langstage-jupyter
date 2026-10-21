@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.43 - 2026-10-21
+
+### Security
+- **The launcher refuses the `.env.example` placeholder token (gh #181).** The example file
+  shipped `LANGSTAGE_JUPYTER_TOKEN=change-me` uncommented, and the launcher picks up the
+  project `.env`, so copying the example as it says pinned a publicly known auth token on a
+  server that runs code. `LANGSTAGE_JUPYTER_SERVER_URL` and `LANGSTAGE_JUPYTER_TOKEN` are now
+  commented out in `.env.example` (the launcher sets both and generates a fresh token), and a
+  placeholder token (`change-me`, `changeme`, ...) from any source is a usage error (exit 64)
+  with a message saying how to fix it. A real pinned token, and an explicitly empty
+  `--IdentityProvider.token=` (auth off), work as before.
+
 ## 0.6.42 - 2026-10-19
 
 ### Fixed
