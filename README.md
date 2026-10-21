@@ -320,7 +320,7 @@ All configuration uses the `LANGSTAGE_` prefix (the pre-rename `DEEPAGENT_` name
 | `LANGSTAGE_MODEL_TEMPERATURE` | Default agent's sampling temperature | `0.0` | Optional |
 | `ANTHROPIC_API_KEY` | Anthropic API key | None | Required for default agent |
 
-When using the `langstage-jupyter` launcher, `LANGSTAGE_JUPYTER_SERVER_URL` and `LANGSTAGE_JUPYTER_TOKEN` are automatically configured and don't need to be set. To pin the launcher's token, set `LANGSTAGE_JUPYTER_TOKEN` (or `jupyter.token` in `langstage.toml`). The launcher picks the token in this order: `--IdentityProvider.token`, then `LANGSTAGE_JUPYTER_TOKEN` (legacy `DEEPAGENT_JUPYTER_TOKEN`, with a deprecation notice), then `JUPYTER_TOKEN`, then a generated one.
+When using the `langstage-jupyter` launcher, `LANGSTAGE_JUPYTER_SERVER_URL` and `LANGSTAGE_JUPYTER_TOKEN` are automatically configured and don't need to be set. To pin the launcher's token, set `LANGSTAGE_JUPYTER_TOKEN` (or `jupyter.token` in `langstage.toml`). The launcher picks the token in this order: `--IdentityProvider.token`, then `LANGSTAGE_JUPYTER_TOKEN` (legacy `DEEPAGENT_JUPYTER_TOKEN`, with a deprecation notice), then `JUPYTER_TOKEN`, then a generated one. The `.env.example` placeholder `change-me` is refused (exit 64), so a copied example never pins a guessable token.
 
 `LANGSTAGE_MODEL_TEMPERATURE` must be a finite number from 0 up to the provider's maximum (1 for Anthropic, 2 for OpenAI and Gemini). Any other value is ignored with a `note:` and the default `0.0` is used.
 

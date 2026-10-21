@@ -278,6 +278,25 @@ def generate_token():
     return secrets.token_urlsafe(32)
 
 
+#: Template values that must never become a live server's auth token (gh #181):
+#: ``.env.example`` shipped ``LANGSTAGE_JUPYTER_TOKEN=change-me``, so copying it to ``.env``
+#: as it says pinned a publicly known token on a server that runs code.
+PLACEHOLDER_TOKENS = frozenset({"change-me", "changeme", "your-token-here", "your-jupyter-token"})
+
+
+def _placeholder_token_error(token, source):
+    """The usage error for a placeholder token, else ``None``."""
+    if str(token).strip().lower() not in PLACEHOLDER_TOKENS:
+        return None
+    return (
+        f"ERROR: the Jupyter token from {source} is the placeholder {str(token).strip()!r}, "
+        "which anyone can guess, and this server runs code.\n"
+        "  Remove that setting (e.g. the LANGSTAGE_JUPYTER_TOKEN line in .env) and the launcher "
+        "generates a fresh token, or pin a real one:\n"
+        "  python3 -c \"import secrets; print(secrets.token_urlsafe(32))\""
+    )
+
+
 #: The token arguments `jupyter lab` accepts. ``--IdentityProvider.token`` is the
 #: modern name; ``--ServerApp.token`` is the documented alias. If the user passes
 #: either, the launcher must not inject its own or the two collide (gh #69).
@@ -1208,17 +1227,22 @@ def main():
     launch_cfg = LabConfig.resolve()
     token_source = launch_cfg.sources.get("jupyter_token", "default")
     if user_token is not None:
-        token = user_token
+        token, from_ = user_token, "--IdentityProvider.token/--ServerApp.token"
         print("Using user-specified token (--IdentityProvider.token/--ServerApp.token)")
     elif token_source != "default" and str(launch_cfg.jupyter_token or ""):
-        token = str(launch_cfg.jupyter_token)
+        token, from_ = str(launch_cfg.jupyter_token), token_source
         print(f"Using the Jupyter token from {token_source}")
     elif os.getenv('JUPYTER_TOKEN'):
-        token = os.environ['JUPYTER_TOKEN']
+        token, from_ = os.environ['JUPYTER_TOKEN'], "env:JUPYTER_TOKEN"
         print("Using existing JUPYTER_TOKEN from environment")
     else:
-        token = generate_token()
+        token, from_ = generate_token(), None
         print("Generated secure authentication token")
+    # A template placeholder is never a real pin: refuse it before anything starts (gh #181).
+    placeholder = _placeholder_token_error(token, from_) if from_ else None
+    if placeholder:
+        print(placeholder, file=sys.stderr)
+        sys.exit(EXIT_USAGE)
 
     # Serve the pinned workspace (gh #150). The notebook tools work through the contents
     # API, so they always act on JupyterLab's serving root, while the agent's file tools
