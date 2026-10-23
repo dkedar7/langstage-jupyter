@@ -767,16 +767,23 @@ class _Run:
         return "\n".join(texts) if texts else "(no output)"
 
 
+def _strip_ansi(text: str) -> str:
+    """Remove terminal CSI control sequences from text returned to the agent."""
+    return re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text)
+
+
 def _output_text(output) -> str:
     """The one-line-per-output text the agent reads back from ``execute_cell``."""
     kind = output["output_type"]
     if kind == "stream":
-        return f"[{output['name']}] {output['text']}"
-    if kind == "execute_result":
-        return output["data"].get("text/plain", str(output["data"]))
-    if kind == "display_data":
-        return f"[display] {output['data'].get('text/plain', 'Rich content')}"
-    return f"ERROR: {output['ename']}: {output['evalue']}\n" + "\n".join(output["traceback"])
+        text = f"[{output['name']}] {output['text']}"
+    elif kind == "execute_result":
+        text = output["data"].get("text/plain", str(output["data"]))
+    elif kind == "display_data":
+        text = f"[display] {output['data'].get('text/plain', 'Rich content')}"
+    else:
+        text = f"ERROR: {output['ename']}: {output['evalue']}\n" + "\n".join(output["traceback"])
+    return _strip_ansi(text)
 
 
 def _collect(client, msg_id: str, run: _Run, deadline: float) -> bool:

@@ -860,3 +860,31 @@ def test_an_xsrf_403_does_not_blame_the_token(monkeypatch, ws):
         monkeypatch.setattr(nt.requests, verb, lambda url, **kw: Resp())
     out = nt.get_notebook_state("report.ipynb")
     assert "XSRF" in out and "token was rejected" not in out
+
+
+# ── execute_cell output is plain text for the agent (gh #184) ─────────
+
+
+@pytest.mark.parametrize(
+    ("output", "expected"),
+    [
+        (
+            {
+                "output_type": "error",
+                "ename": "KeyError",
+                "evalue": "'missing'",
+                "traceback": [
+                    "\x1b[31m---------------------------------------------------------------------------\x1b[39m",
+                    "\x1b[31mKeyError\x1b[39m: 'missing'",
+                ],
+            },
+            "ERROR: KeyError: 'missing'\n---------------------------------------------------------------------------\nKeyError: 'missing'",
+        ),
+        (
+            {"output_type": "stream", "name": "stderr", "text": "\x1b[31mwarning\x1b[0m"},
+            "[stderr] warning",
+        ),
+    ],
+)
+def test_output_text_strips_ansi_csi_sequences(output, expected):
+    assert nt._output_text(output) == expected
