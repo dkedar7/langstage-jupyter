@@ -767,16 +767,26 @@ class _Run:
         return "\n".join(texts) if texts else "(no output)"
 
 
+# Terminal control sequences (CSI, e.g. ``\x1b[31m``): IPython colors every traceback and
+# libraries color their stream output. They only cost the agent tokens (gh #184).
+_ANSI_CSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
+
+def _plain(text: str) -> str:
+    return _ANSI_CSI.sub("", text)
+
+
 def _output_text(output) -> str:
-    """The one-line-per-output text the agent reads back from ``execute_cell``."""
+    """The one-line-per-output text the agent reads back from ``execute_cell``, as plain
+    text. The notebook's saved outputs keep their colors."""
     kind = output["output_type"]
     if kind == "stream":
-        return f"[{output['name']}] {output['text']}"
+        return _plain(f"[{output['name']}] {output['text']}")
     if kind == "execute_result":
-        return output["data"].get("text/plain", str(output["data"]))
+        return _plain(output["data"].get("text/plain", str(output["data"])))
     if kind == "display_data":
-        return f"[display] {output['data'].get('text/plain', 'Rich content')}"
-    return f"ERROR: {output['ename']}: {output['evalue']}\n" + "\n".join(output["traceback"])
+        return _plain(f"[display] {output['data'].get('text/plain', 'Rich content')}")
+    return _plain(f"ERROR: {output['ename']}: {output['evalue']}\n" + "\n".join(output["traceback"]))
 
 
 def _collect(client, msg_id: str, run: _Run, deadline: float) -> bool:
