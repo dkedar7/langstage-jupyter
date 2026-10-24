@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.6.44 - 2026-10-24
+
+### Security
+- **Copying `.env.example` no longer turns on LangSmith tracing (gh #183).** The example
+  shipped `LANGSMITH_TRACING=true` and a placeholder `LANGSMITH_API_KEY` uncommented, so
+  following its "copy this file to .env" instruction made every turn, `--demo` included, try
+  to upload a trace to api.smith.langchain.com. With a real LangSmith key already in the
+  shell, notebook conversations were sent to that account without being asked. The LangSmith
+  block is now commented out (uncomment it to opt in), and so is the placeholder
+  `ANTHROPIC_API_KEY`, which made the key look set and hid the missing-key hint.
+
+### Fixed
+- **`execute_cell` returns plain text (gh #184).** IPython colors every traceback, and the
+  ANSI escapes went straight into the tool result: about 44% of a failed cell's text was
+  `[..m` noise. Escape sequences are now stripped from tracebacks, streams and results
+  in what the agent reads and the sidebar shows. The notebook's saved outputs keep their
+  colors.
+
 ## 0.6.43 - 2026-10-21
 
 ### Security
