@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import functools
 import os
+import posixpath
 import queue
 import re
 import secrets
@@ -117,7 +118,28 @@ def _headers() -> dict:
 
 
 def _norm(notebook_path: str) -> str:
-    return notebook_path.strip("/")
+    """The one spelling of a root-relative path that every tool uses (gh #187).
+
+    The contents API treats ``a.ipynb``, ``./a.ipynb``, ``/a.ipynb``, ``.//a.ipynb``
+    and ``sub/./b.ipynb`` as the same file, so they must also bind to the same kernel
+    session; stripping only ``/`` let ``./a.ipynb`` miss the user's session, start a
+    second kernel and save that kernel's output into the user's notebook. Surrounding
+    whitespace goes too, and on Windows ``\\`` is a separator like ``/``.
+    """
+    path = notebook_path.strip()
+    if os.sep == "\\":
+        path = path.replace("\\", "/")
+    path = posixpath.normpath(path).lstrip("/") if path else ""
+    return "" if path == "." else path
+
+
+def _session_key(notebook_path: str) -> str:
+    """How two normalized paths compare when matching sessions and cached clients.
+
+    Windows paths are case-insensitive, so ``A.ipynb`` is the user's ``a.ipynb``
+    there and must reuse its kernel rather than start another one (gh #187)."""
+    path = _norm(notebook_path)
+    return path.casefold() if os.name == "nt" else path
 
 
 def _confine(notebook_path: str) -> str:
@@ -130,17 +152,19 @@ def _confine(notebook_path: str) -> str:
     drive-qualified or UNC path is refused before the server or the disk is touched.
     A leading ``/`` is kept as root-relative, the contents API's own convention.
     """
-    path = _norm(notebook_path)
+    # Checked on the raw spelling: normalizing first would fold "sub/../../x" into
+    # "../x" (still refused) but also "sub/../x" into "x", and a `..` is refused outright.
+    raw = notebook_path.strip()
     if (
-        ".." in re.split(r"[\\/]", path)
-        or re.match(r"^[A-Za-z]:", path)
-        or path.startswith("\\")
+        ".." in re.split(r"[\\/]", raw)
+        or re.match(r"^[\\/]*[A-Za-z]:", raw)
+        or raw.lstrip("/").startswith("\\")
     ):
         raise PathOutsideRoot(
             f"{notebook_path!r} points outside the JupyterLab serving root. Use a path "
             "relative to the root, without '..' segments or a drive/UNC prefix."
         )
-    return path
+    return _norm(notebook_path)
 
 
 def _contents_url(notebook_path: str) -> str:
@@ -323,7 +347,7 @@ def start_notebook_kernel(notebook_path: str) -> str:
     response = requests.post(
         f"{JUPYTER_SERVER_URL}/api/sessions",
         headers=_headers(),
-        json={"path": notebook_path, "type": "notebook", "kernel": {"name": "python3"}},
+        json={"path": _norm(notebook_path), "type": "notebook", "kernel": {"name": "python3"}},
         timeout=_HTTP_TIMEOUT,
     )
     if response.status_code not in (200, 201):
@@ -345,9 +369,11 @@ def get_notebook_kernel_id(notebook_path: str) -> str:
     # ran in data.ipynb's kernel, silently sharing/clobbering its namespace while
     # saving outputs back into a.ipynb (gh #96). Both sides are normalized the same
     # way so the comparison is on the real path, not raw containment.
-    target = _norm(notebook_path)
+    # Equivalent spellings ("./a.ipynb", "sub/./b.ipynb", "A.ipynb" on Windows) are
+    # one notebook, so they match its session too (gh #187).
+    target = _session_key(notebook_path)
     for session in response.json():
-        if _norm(session.get("notebook", {}).get("path", "")) == target:
+        if _session_key(session.get("notebook", {}).get("path", "")) == target:
             return session["kernel"]["id"]
     raise ValueError(f"No running kernel found for {notebook_path}")
 
@@ -395,7 +421,8 @@ def _connect_kernel(notebook_path: str) -> BlockingKernelClient:
     * liveness — the cache was never invalidated, so restarting the kernel from the
       JupyterLab UI left a dead client behind and every later execute hung.
     """
-    client = kernel_clients.get(notebook_path)
+    key = _session_key(notebook_path)  # one cached client per notebook (gh #187)
+    client = kernel_clients.get(key)
     if client is not None:
         try:
             if client.is_alive():
@@ -406,14 +433,14 @@ def _connect_kernel(notebook_path: str) -> BlockingKernelClient:
             client.stop_channels()
         except Exception:  # noqa: BLE001
             pass
-        kernel_clients.pop(notebook_path, None)
+        kernel_clients.pop(key, None)
 
     kernel_id = start_notebook_kernel(notebook_path)
     client = BlockingKernelClient()
     client.load_connection_file(find_connection_file(kernel_id))
     client.start_channels()
     _await_ready(client, KERNEL_READY_TIMEOUT)
-    kernel_clients[notebook_path] = client
+    kernel_clients[key] = client
     return client
 
 
