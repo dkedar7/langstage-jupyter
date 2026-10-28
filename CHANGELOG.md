@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.45 - 2026-10-28
+
+### Fixed
+- **`execute_cell("./a.ipynb")` runs in the notebook's open kernel (gh #187).** The session
+  match only stripped `/`, so a spelling the contents API treats as the same file
+  (`./a.ipynb`, `.//a.ipynb`, `sub/./b.ipynb`, or ` a.ipynb ` with stray spaces) missed the
+  user's session. The tool started a second kernel, ran the cell there (a `NameError` on the
+  user's variables) and saved that output into the user's notebook. Every tool now uses one
+  normalized path for the contents URL, the session match, a new session and the cached
+  kernel client. On Windows, where paths are case-insensitive and `\` is a separator,
+  `A.ipynb` and `sub\b.ipynb` also reuse the open kernel. `..` segments and drive or UNC
+  paths are still refused.
+
 ## 0.6.44 - 2026-10-24
 
 ### Security
