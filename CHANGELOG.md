@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.46 - 2026-10-30
+
+### Fixed
+- **`execute_cell` no longer overwrites what was saved while the cell ran (gh #189).** It
+  saved the copy of the notebook it read before the run, with the new outputs added, so a
+  cell the user added, an edit, JupyterLab's autosave or another tool's write during a slow
+  run was silently lost (and the sidebar's reload then showed the stale copy in the tab).
+  It now re-reads the notebook after the run and puts the outputs into the cell that ran,
+  found by its cell id (or, in a notebook without ids, by position and source), wherever it
+  is now. If that cell was deleted, turned into markdown or can't be told apart from
+  another, or the notebook itself was deleted, nothing is written and the result says so;
+  the output is still returned to the agent. The result's `[N]` is the cell's index after
+  the run, with a note when it moved or its source was edited during the run.
+
 ## 0.6.45 - 2026-10-28
 
 ### Fixed
