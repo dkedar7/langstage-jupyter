@@ -23,6 +23,7 @@ import sys
 import socket
 import secrets
 import subprocess
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -504,7 +505,8 @@ def serve_check(agent_spec=None, *, boot_timeout=45.0, turn_timeout=60.0):
         # 2. Drive one served turn and inspect the SSE stream.
         try:
             resp = _request(
-                "/chat", data={"message": "serve-check ping", "thread_id": "serve-check"},
+                "/chat", data={"message": "serve-check ping",
+                              "thread_id": f"serve-check-{uuid.uuid4().hex}"},
                 timeout=turn_timeout,
             )
             chunks, complete, error, saw_interrupt = _summarize_sse(iter(resp))
@@ -718,7 +720,7 @@ def _ask_exit_code(outcome: str) -> int:
     return exit_code_for_outcome(outcome)
 
 
-def ask(prompt, *, thread_id="ask", turn_timeout=120.0):
+def ask(prompt, *, thread_id=None, turn_timeout=120.0):
     """Run ONE turn against the configured agent and print its reply; return an exit code.
 
     Resolves the agent the SAME way ``--verify`` and the sidebar runtime do — an explicit
@@ -799,6 +801,11 @@ def ask(prompt, *, thread_id="ask", turn_timeout=120.0):
         # TurnResult — the same wire the sidebar streams, so the printed reply matches. Guard
         # the whole call so a non-runnable graph (wrong type / uncompiled) is a clean [fail],
         # not a crash (gh #92).
+        # A fresh thread per invocation (gh #191, langstage-core #221): with an agent that
+        # brings a durable checkpointer, a constant thread leaked every earlier run's history
+        # into this one, and one paused run left every later --ask replaying its interrupt.
+        if thread_id is None:
+            thread_id = f"ask-{uuid.uuid4().hex}"
         try:
             result = asyncio.run(
                 asyncio.wait_for(

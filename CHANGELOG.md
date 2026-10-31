@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.47 - 2026-10-31
+
+### Fixed
+- **`--ask` and `--serve-check` run each invocation on a fresh thread (gh #191).** `--ask`
+  used the constant thread `ask` (and `--serve-check` the thread `serve-check`). With an
+  agent that brings its own durable checkpointer, every run then saw the earlier runs'
+  history, and one run that paused at an interrupt left every later `--ask` replaying it
+  and exiting 2. Each run now gets its own `ask-<id>` thread. `--verify` gets the same
+  fix from langstage-core 1.0.55 (the same bug there, core #221), so the core floor is now
+  `>=1.0.55`.
+
 ## 0.6.46 - 2026-10-30
 
 ### Fixed
