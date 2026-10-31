@@ -739,17 +739,66 @@ def execute_cell(
             )
         run.notes.append(budget + " Output above may be incomplete.")
 
+    # The run can take minutes, and the notebook may have been saved meanwhile (a cell
+    # the user added, an autosave, another tool). Re-read it and put the outputs into
+    # the cell that ran, wherever it is now, instead of saving the copy read before
+    # the run over everything saved since (gh #189).
+    start_idx = cell_index if cell_index >= 0 else len(nb.cells) + cell_index
+    count = f" (In[{run.execution_count}])" if run.execution_count is not None else ""
+    header = f"Executed cell [{start_idx}]{count} in {notebook_path}"
+    try:
+        current = _load_notebook(notebook_path)
+    except NotebookNotFound:
+        return (
+            f"{header}:\n{run.summary()}\n[langstage-jupyter] {notebook_path} was deleted "
+            "or renamed while the cell ran, so its outputs were not saved."
+        )
+    idx = _find_ran_cell(current, cell, start_idx)
+    if idx is None:
+        return (
+            f"{header}:\n{run.summary()}\n[langstage-jupyter] The cell was deleted or "
+            f"changed while it ran, so its outputs were not saved to {notebook_path}."
+        )
+    target = current.cells[idx]
     # A run that started replaces the cell's outputs with its own, partial ones
     # included (that is what running a cell means in JupyterLab too).
-    cell.execution_count = run.execution_count
-    cell.outputs = run.outputs
-    _save_notebook(nb, notebook_path)
+    target.execution_count = run.execution_count
+    target.outputs = run.outputs
+    _save_notebook(current, notebook_path)
 
     # [...] is the positional index, as in every other tool; the kernel's In[N] counter
     # is a separate label so an index-tracking agent isn't pointed at another cell (gh #118).
-    idx = cell_index if cell_index >= 0 else len(nb.cells) + cell_index
-    count = f" (In[{run.execution_count}])" if run.execution_count is not None else ""
-    return f"Executed cell [{idx}]{count} in {notebook_path}:\n{run.summary()}"
+    # It's the index the cell has now, since cells may have moved during the run.
+    notes = []
+    if idx != start_idx:
+        notes.append(f"The cell moved from [{start_idx}] to [{idx}] while it ran.")
+    if target.source != cell.source:
+        notes.append("The cell's source was edited while it ran; the outputs are from "
+                     "the version that ran.")
+    extra = "".join(f"\n[langstage-jupyter] {n}" for n in notes)
+    return f"Executed cell [{idx}]{count} in {notebook_path}:\n{run.summary()}{extra}"
+
+
+def _find_ran_cell(nb: nbformat.NotebookNode, ran, start_idx: int) -> Optional[int]:
+    """Index of the cell that ran in ``nb`` (re-read after the run), or None if it's gone.
+
+    Matches by cell ``id`` (nbformat 4.5). A notebook without ids falls back to the
+    same position with the same source, then to the one code cell with that source;
+    anything ambiguous is treated as gone rather than guessed (gh #189)."""
+    cells = nb.cells
+    cell_id = ran.get("id")
+    if cell_id:
+        for i, c in enumerate(cells):
+            if c.get("id") == cell_id:
+                return i if c.cell_type == "code" else None
+        return None
+    if 0 <= start_idx < len(cells):
+        c = cells[start_idx]
+        if c.cell_type == "code" and c.source == ran.source:
+            return start_idx
+    same = [i for i, c in enumerate(cells)
+            if c.cell_type == "code" and c.source == ran.source]
+    return same[0] if len(same) == 1 else None
 
 
 class _Run:
