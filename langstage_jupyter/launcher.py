@@ -925,6 +925,193 @@ def _pinned_workspace_root() -> Optional[Path]:
     return Path(cfg.workspace_root).expanduser().resolve()
 
 
+# Termination signals the launcher forwards to the JupyterLab server it started.
+# Without this, SIGTERM/SIGHUP (kill <pid>, timeout, docker stop, supervisors, IDE stop
+# buttons) killed only the launcher and orphaned the server on its port with its
+# kernels and the hidden token (gh #193). SIGBREAK is Ctrl+Break on Windows.
+_FORWARDED_SIGNALS = ('SIGTERM', 'SIGHUP', 'SIGBREAK')
+# How long the server gets to shut its kernels down after a forwarded signal or a
+# Ctrl+C before the launcher kills it.
+_CHILD_GRACE_SECONDS = 15.0
+
+
+def _linux_parent_death_signal():
+    """In the child: ask Linux to SIGTERM it if the launcher dies, even by SIGKILL.
+
+    Best effort; prctl(PR_SET_PDEATHSIG) is Linux-only and a failure is ignored.
+    """
+    try:
+        import ctypes
+        import signal as _signal
+
+        libc = ctypes.CDLL(None, use_errno=True)
+        libc.prctl(1, int(_signal.SIGTERM), 0, 0, 0)  # 1 == PR_SET_PDEATHSIG
+    except Exception:
+        pass
+
+
+def _bind_to_windows_job(proc):
+    """Put the child in a job object that is killed when the launcher exits.
+
+    A hard stop on Windows (taskkill /F, a closed console, a task-runner stop button)
+    ends the launcher without running any handler, so this is the only way the server
+    and its kernels go with it. Best effort: returns the job handle (keep it open for
+    the launcher's lifetime) or None.
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.SetInformationJobObject.argtypes = [
+            wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+        kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+        class _BasicLimits(ctypes.Structure):
+            _fields_ = [
+                ('PerProcessUserTimeLimit', ctypes.c_int64),
+                ('PerJobUserTimeLimit', ctypes.c_int64),
+                ('LimitFlags', wintypes.DWORD),
+                ('MinimumWorkingSetSize', ctypes.c_size_t),
+                ('MaximumWorkingSetSize', ctypes.c_size_t),
+                ('ActiveProcessLimit', wintypes.DWORD),
+                ('Affinity', ctypes.c_size_t),
+                ('PriorityClass', wintypes.DWORD),
+                ('SchedulingClass', wintypes.DWORD),
+            ]
+
+        class _IoCounters(ctypes.Structure):
+            _fields_ = [(n, ctypes.c_uint64) for n in (
+                'ReadOperationCount', 'WriteOperationCount', 'OtherOperationCount',
+                'ReadTransferCount', 'WriteTransferCount', 'OtherTransferCount')]
+
+        class _ExtendedLimits(ctypes.Structure):
+            _fields_ = [
+                ('BasicLimitInformation', _BasicLimits),
+                ('IoInfo', _IoCounters),
+                ('ProcessMemoryLimit', ctypes.c_size_t),
+                ('JobMemoryLimit', ctypes.c_size_t),
+                ('PeakProcessMemoryUsed', ctypes.c_size_t),
+                ('PeakJobMemoryUsed', ctypes.c_size_t),
+            ]
+
+        job = kernel32.CreateJobObjectW(None, None)
+        if not job:
+            return None
+        info = _ExtendedLimits()
+        info.BasicLimitInformation.LimitFlags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if not kernel32.SetInformationJobObject(
+            job, 9, ctypes.byref(info), ctypes.sizeof(info)  # 9 == ExtendedLimitInformation
+        ):
+            kernel32.CloseHandle(job)
+            return None
+        handle = kernel32.OpenProcess(0x0101, False, proc.pid)  # SET_QUOTA | TERMINATE
+        if not handle:
+            kernel32.CloseHandle(job)
+            return None
+        try:
+            if not kernel32.AssignProcessToJobObject(job, handle):
+                kernel32.CloseHandle(job)
+                return None
+        finally:
+            kernel32.CloseHandle(handle)
+        return job
+    except Exception:
+        return None
+
+
+def _stop_child(proc):
+    """Give the child the grace period to finish shutting down, then kill it."""
+    try:
+        proc.wait(timeout=_CHILD_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+
+
+def _run_child(args, env=None):
+    """Run JupyterLab like ``subprocess.run``, but never leave it orphaned (gh #193).
+
+    SIGTERM/SIGHUP/SIGBREAK sent to the launcher are forwarded to the server, which
+    shuts its kernels down on SIGTERM just as a plain ``jupyter lab`` does, and the
+    launcher then exits with the server's exit code. A Ctrl+C stops the server too.
+    On Linux the server also gets SIGTERM if the launcher is killed outright; on
+    Windows it runs in a job object that dies with the launcher.
+    """
+    import signal
+
+    popen_kwargs = {}
+    if sys.platform.startswith('linux'):
+        popen_kwargs['preexec_fn'] = _linux_parent_death_signal
+    proc = subprocess.Popen(args, env=env, **popen_kwargs)
+    job = _bind_to_windows_job(proc) if os.name == 'nt' else None
+
+    forwarded = []
+
+    def _forward(signum, _frame):
+        forwarded.append(signum)
+        try:
+            if os.name == 'nt':
+                proc.terminate()
+            else:
+                proc.send_signal(signum)
+        except OSError:
+            pass
+
+    previous = {}
+    for name in _FORWARDED_SIGNALS:
+        sig = getattr(signal, name, None)
+        if sig is None:
+            continue
+        try:
+            previous[sig] = signal.signal(sig, _forward)
+        except (ValueError, OSError):  # not the main thread, or not settable here
+            pass
+    try:
+        while True:
+            try:
+                if forwarded:
+                    _stop_child(proc)
+                else:
+                    proc.wait()
+                break
+            except KeyboardInterrupt:
+                # A terminal Ctrl+C reaches the server as well, but JupyterLab only asks
+                # "Shutdown this Jupyter server (y/[n])?" and resumes after 5 s, and a
+                # `kill -INT <launcher>` never reaches it at all. Either way the user
+                # asked the launcher to stop, so stop the server.
+                safe_print("\n\nShutting down langstage-jupyter...")
+                try:
+                    proc.terminate()
+                except OSError:
+                    pass
+                _stop_child(proc)
+                return subprocess.CompletedProcess(args, 0)
+    finally:
+        for sig, handler in previous.items():
+            try:
+                signal.signal(sig, handler)
+            except (ValueError, OSError):
+                pass
+        if proc.poll() is None:  # an unexpected error: still never orphan the server
+            proc.kill()
+            proc.wait()
+        if job is not None:
+            try:
+                import ctypes
+
+                ctypes.WinDLL('kernel32').CloseHandle(ctypes.c_void_p(job))
+            except Exception:
+                pass
+    rc = proc.returncode
+    if rc < 0:  # the server died of a signal: report it the way a shell would
+        rc = 128 - rc
+    return subprocess.CompletedProcess(args, rc)
+
+
 def main():
     """Main launcher function."""
     # Parse command line arguments
@@ -1352,14 +1539,16 @@ def main():
         # Propagate JupyterLab's exit code — otherwise a startup failure (port in use,
         # a fatal config error, the root guard) exits the launcher 0, so `set -e`, CI
         # steps, systemd, and `langstage-jupyter && next` all think it succeeded (gh #62).
-        result = subprocess.run(jupyter_args, env=os.environ)
+        result = _run_child(jupyter_args, env=os.environ)
         # ...except 2: JupyterLab's argparse exits 2 on a bad passthrough flag, and the
         # family reserves 2 for "paused on a HITL interrupt" (ADR 0007), so a failed
         # launch must never read as a pause. Map it to 1 (failure).
         rc = result.returncode
         sys.exit(EXIT_FAIL if rc == EXIT_PAUSED else rc)
     except KeyboardInterrupt:
-        print("\n\nShutting down DeepAgent Lab...")
+        # Only reached when Ctrl+C lands outside the child's wait; _run_child itself
+        # turns a Ctrl+C into a clean shutdown of the server.
+        print("\n\nShutting down langstage-jupyter...")
         sys.exit(0)
     except FileNotFoundError:
         print("ERROR: 'jupyter' command not found. Please install JupyterLab:")

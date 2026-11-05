@@ -58,7 +58,7 @@ class TestMainAgentWiring:
             calls["env_spec"] = (env or {}).get("LANGSTAGE_AGENT_SPEC")
             return MagicMock(returncode=returncode)
 
-        monkeypatch.setattr("langstage_jupyter.launcher.subprocess.run", fake_run)
+        monkeypatch.setattr("langstage_jupyter.launcher._run_child", fake_run)
         monkeypatch.setattr("sys.argv", ["langstage-jupyter"] + argv)
         monkeypatch.delenv("LANGSTAGE_AGENT_SPEC", raising=False)
         monkeypatch.delenv("DEEPAGENT_AGENT_SPEC", raising=False)
@@ -477,7 +477,7 @@ class TestPortHandling:
             calls["cmd"] = cmd
             return MagicMock(returncode=0)
 
-        monkeypatch.setattr("langstage_jupyter.launcher.subprocess.run", fake_run)
+        monkeypatch.setattr("langstage_jupyter.launcher._run_child", fake_run)
         monkeypatch.setattr("sys.argv", ["langstage-jupyter"] + argv)
         with pytest.raises(SystemExit):  # main() propagates the child's exit code (gh #62)
             main()
@@ -514,7 +514,7 @@ class TestTokenHandling:
             calls["env"] = dict(env or {})
             return MagicMock(returncode=0)
 
-        monkeypatch.setattr("langstage_jupyter.launcher.subprocess.run", fake_run)
+        monkeypatch.setattr("langstage_jupyter.launcher._run_child", fake_run)
         monkeypatch.setattr("sys.argv", ["langstage-jupyter"] + argv)
         monkeypatch.delenv("JUPYTER_TOKEN", raising=False)
         with pytest.raises(SystemExit):  # main() propagates the child's exit code (gh #62)
@@ -668,7 +668,7 @@ class TestGeneratedTokenLeadingDash:
         monkeypatch.setattr(
             "langstage_jupyter.launcher.secrets.token_urlsafe", lambda n: token
         )
-        monkeypatch.setattr("langstage_jupyter.launcher.subprocess.run", fake_run)
+        monkeypatch.setattr("langstage_jupyter.launcher._run_child", fake_run)
         monkeypatch.setattr("sys.argv", ["langstage-jupyter"] + argv)
         monkeypatch.delenv("JUPYTER_TOKEN", raising=False)
         with pytest.raises(SystemExit):  # main() propagates the child's exit code
@@ -712,7 +712,7 @@ class TestGeneratedTokenLeadingDash:
             calls["cmd"] = cmd
             return MagicMock(returncode=0)
 
-        monkeypatch.setattr("langstage_jupyter.launcher.subprocess.run", fake_run)
+        monkeypatch.setattr("langstage_jupyter.launcher._run_child", fake_run)
         monkeypatch.setattr("sys.argv", ["langstage-jupyter", "--no-browser"])
         monkeypatch.setenv("JUPYTER_TOKEN", LEADING_DASH_TOKEN)
         with pytest.raises(SystemExit):
@@ -1686,7 +1686,7 @@ class TestValuelessLauncherFlags:
     ])
     def test_ask_without_a_prompt_is_a_launcher_error(self, monkeypatch, capsys, argv):
         ran = []
-        monkeypatch.setattr("langstage_jupyter.launcher.subprocess.run",
+        monkeypatch.setattr("langstage_jupyter.launcher._run_child",
                             lambda *a, **k: ran.append(a))
         monkeypatch.setattr("langstage_jupyter.launcher.ask", lambda *a, **k: ran.append(a) or 0)
         monkeypatch.setattr("sys.argv", ["langstage-jupyter"] + argv)
@@ -1700,7 +1700,7 @@ class TestValuelessLauncherFlags:
                                       ["--agent", "--demo"]])
     def test_agent_flag_without_a_spec_is_a_launcher_error(self, monkeypatch, capsys, argv):
         ran = []
-        monkeypatch.setattr("langstage_jupyter.launcher.subprocess.run",
+        monkeypatch.setattr("langstage_jupyter.launcher._run_child",
                             lambda *a, **k: ran.append(a))
         monkeypatch.setattr("sys.argv", ["langstage-jupyter"] + argv)
         with pytest.raises(SystemExit) as exc:
@@ -1737,7 +1737,7 @@ class TestPortPinning:
             calls["url"] = (env or {}).get("LANGSTAGE_JUPYTER_SERVER_URL")
             return MagicMock(returncode=0)
 
-        monkeypatch.setattr("langstage_jupyter.launcher.subprocess.run", fake_run)
+        monkeypatch.setattr("langstage_jupyter.launcher._run_child", fake_run)
         monkeypatch.setattr("sys.argv", ["langstage-jupyter"] + argv)
         with pytest.raises(SystemExit):
             main()
@@ -1782,7 +1782,7 @@ class TestPortPinning:
         # gh #155: `--port 0` was read as "no port", so the launcher advertised :8888
         # while the server bound a random port.
         ran = []
-        monkeypatch.setattr("langstage_jupyter.launcher.subprocess.run",
+        monkeypatch.setattr("langstage_jupyter.launcher._run_child",
                             lambda *a, **k: ran.append(a))
         monkeypatch.setattr("sys.argv", ["langstage-jupyter"] + argv)
         with pytest.raises(SystemExit) as exc:
@@ -1880,7 +1880,7 @@ def test_plain_launch_banner_survives_a_cp1252_console(monkeypatch):
 
     buf = io.BytesIO()
     monkeypatch.setattr(_sys, "stdout", io.TextIOWrapper(buf, encoding="cp1252"))
-    monkeypatch.setattr("langstage_jupyter.launcher.subprocess.run",
+    monkeypatch.setattr("langstage_jupyter.launcher._run_child",
                         lambda *a, **k: MagicMock(returncode=0))
     monkeypatch.setattr("sys.argv", ["langstage-jupyter", "-a",
                                      r"C:\Users\Даша\my_agent.py:graph", "--no-browser"])
