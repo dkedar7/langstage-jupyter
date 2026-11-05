@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.48 - 2026-11-05
+
+### Fixed
+- **Stopping the launcher stops the JupyterLab server it started (gh #193).** The launcher
+  ran JupyterLab with `subprocess.run` and handled only Ctrl+C, so SIGTERM or SIGHUP
+  (`kill <pid>`, `timeout`, `docker stop`, supervisors, IDE stop buttons) killed the
+  launcher and left the server running on its port with its kernels and the hidden token.
+  The launcher now forwards SIGTERM, SIGHUP and (on Windows) Ctrl+Break to the server,
+  waits up to 15 s for it to shut its kernels down, then kills it, and exits with the
+  server's exit code (128 + the signal if the server died of one). On Linux the server
+  also gets SIGTERM if the launcher is killed outright, and on Windows it runs in a job
+  object, so `taskkill /F` on the launcher takes the server with it. Ctrl+C, and a
+  `kill -INT` sent to the launcher alone, now stop the server instead of leaving it at
+  JupyterLab's "Shutdown this Jupyter server?" prompt. The Ctrl+C message no longer says
+  "DeepAgent Lab".
+
 ## 0.6.47 - 2026-10-31
 
 ### Fixed

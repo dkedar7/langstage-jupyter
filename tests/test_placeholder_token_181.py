@@ -35,7 +35,7 @@ def launch(tmp_path, monkeypatch):
 
         return R()
 
-    monkeypatch.setattr("langstage_jupyter.launcher.subprocess.run", fake_run)
+    monkeypatch.setattr("langstage_jupyter.launcher._run_child", fake_run)
 
     def run(*extra):
         monkeypatch.setattr("sys.argv", ["langstage-jupyter", "--no-browser", "--port", "8991", *extra])

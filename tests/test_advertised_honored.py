@@ -190,7 +190,7 @@ class TestLaunchToken:
 
             return R()
 
-        monkeypatch.setattr("langstage_jupyter.launcher.subprocess.run", fake_run)
+        monkeypatch.setattr("langstage_jupyter.launcher._run_child", fake_run)
         monkeypatch.setattr("sys.argv", ["langstage-jupyter", "--no-browser", "--port", "8990"])
         with pytest.raises(SystemExit):
             main()
@@ -340,7 +340,7 @@ class TestPinnedWorkspaceServing:
 
             return R()
 
-        monkeypatch.setattr("langstage_jupyter.launcher.subprocess.run", fake_run)
+        monkeypatch.setattr("langstage_jupyter.launcher._run_child", fake_run)
         monkeypatch.setattr("sys.argv", ["langstage-jupyter", "--no-browser", *argv])
         with pytest.raises(SystemExit):
             main()

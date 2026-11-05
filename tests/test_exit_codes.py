@@ -50,7 +50,7 @@ def test_exit_code_for_outcome(outcome, code):
 )
 def test_usage_errors_exit_64(monkeypatch, capsys, argv):
     ran = []
-    monkeypatch.setattr("langstage_jupyter.launcher.subprocess.run", lambda *a, **k: ran.append(a))
+    monkeypatch.setattr("langstage_jupyter.launcher._run_child", lambda *a, **k: ran.append(a))
     assert _exit(monkeypatch, argv) == 64
     assert not ran
 
@@ -86,7 +86,7 @@ def test_no_free_port_is_a_clean_failure_1(monkeypatch, capsys):
 
     monkeypatch.setattr(launcher, "find_available_port", _none)
     ran = []
-    monkeypatch.setattr("langstage_jupyter.launcher.subprocess.run", lambda *a, **k: ran.append(a))
+    monkeypatch.setattr("langstage_jupyter.launcher._run_child", lambda *a, **k: ran.append(a))
     assert _exit(monkeypatch, ["--no-browser"]) == 1
     assert "Could not find an available port" in capsys.readouterr().err
     assert not ran
@@ -98,7 +98,7 @@ def test_jupyter_child_exit_propagates_except_2(monkeypatch, capsys, child, expe
     # propagates the child's code (gh #62) but never as 2, which the family reserves for
     # "paused on a HITL interrupt".
     monkeypatch.setattr(
-        "langstage_jupyter.launcher.subprocess.run", lambda *a, **k: MagicMock(returncode=child)
+        "langstage_jupyter.launcher._run_child", lambda *a, **k: MagicMock(returncode=child)
     )
     assert _exit(monkeypatch, ["--port=19199", "--no-browser"]) == expected
 
