@@ -415,6 +415,30 @@ class AgentWrapper:
         except Exception as e:
             yield {"error": f"Error executing agent: {str(e)}", "status": "error"}
 
+    async def decision_problems(self, decisions: Any, thread_id: str) -> list:
+        """Why ``decisions`` would be refused by the thread's pending approval, or ``[]``.
+
+        Reads the interrupt the thread is paused on and checks the answer with
+        ``langstage_core.decision_problems`` (core #227), so the resume handler can
+        answer 400 before anything is sent. ``[]`` when there's nothing to check
+        against (no agent yet, no pending approval, state unreadable): the resume
+        then runs and core's own check still applies.
+        """
+        if self._agui_agent is None:
+            return []
+        try:
+            from langstage_core import decision_problems
+
+            state = await self._agui_agent.graph.aget_state(
+                {"configurable": {"thread_id": thread_id}}
+            )
+            pending = [i.value for t in state.tasks for i in t.interrupts]
+        except Exception:
+            return []
+        if not pending:
+            return []
+        return decision_problems({"decisions": decisions}, pending[0])
+
     def resume_from_interrupt(self, decisions: list, config: Optional[Dict[str, Any]] = None, thread_id: Optional[str] = None) -> Iterator[Dict[str, Any]]:
         """
         Resume execution after a human-in-the-loop interrupt.

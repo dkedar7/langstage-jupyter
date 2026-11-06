@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.50 - 2026-11-06
+
+### Fixed
+- **A refused approval answer is a 400 and the approval stays answerable** (langstage-core
+  #227). `/resume` now checks the decisions against the thread's pending approval with
+  `langstage_core.decision_problems` before streaming. An answer the approval middleware
+  would refuse (a type the tool doesn't allow, an `edit` without `edited_action`, a
+  `respond` without a `message`) gets a 400 with the reason. Nothing is sent, so the
+  thread is still paused on the same approval. The sidebar shows the reason and keeps the
+  approval card answerable. Requires langstage-core >= 1.0.58, which also checks every
+  resume that reaches it and recovers a thread an older version left stuck on a refused
+  answer.
+
 ## 0.6.49 - 2026-11-06
 
 ### Fixed
