@@ -21,6 +21,20 @@ from langstage_core import apply_workspace, load_agent_spec, workspace_root
 from langstage_core.host import parse_agent_spec
 
 
+# Where the agent comes from; the chat error and /health name these (gh #195).
+AGENT_SETTING_HINT = "-a / LANGSTAGE_AGENT_SPEC / agent.spec in langstage.toml"
+
+
+def not_loaded_message(load_error: Optional[str]) -> str:
+    """The chat reply when no agent is loaded: the real cause, then the real settings."""
+    if isinstance(load_error, str) and load_error:
+        return (
+            f"Agent not loaded: {load_error}. Fix the agent ({AGENT_SETTING_HINT}), "
+            "then press Reload agent."
+        )
+    return f"Agent not loaded. Set the agent ({AGENT_SETTING_HINT}), then press Reload agent."
+
+
 class AgentWrapper:
     """Wrapper class for LangGraph agent."""
 
@@ -29,7 +43,7 @@ class AgentWrapper:
         Initialize the agent wrapper.
 
         Priority for agent resolution:
-        1. DEEPAGENT_AGENT_SPEC environment variable (format: "module_or_file:variable")
+        1. LANGSTAGE_AGENT_SPEC environment variable (format: "module_or_file:variable")
         2. Function parameters (agent_module_path, agent_variable_name)
         3. Default values from config module
 
@@ -175,7 +189,7 @@ class AgentWrapper:
         except (ValueError, FileNotFoundError, ImportError, AttributeError) as e:
             print(f"Warning: Could not load agent '{self.agent_module_path}': {e}")
             if config.AGENT_SPEC:
-                print(f"Note: DEEPAGENT_AGENT_SPEC is set to: {config.AGENT_SPEC}")
+                print(f"Note: LANGSTAGE_AGENT_SPEC is set to: {config.AGENT_SPEC}")
             self.agent, self.load_error = None, str(e)
         except Exception as e:
             print(f"Error loading agent: {e}")
@@ -358,13 +372,8 @@ class AgentWrapper:
             Must provide exactly one of: message or decisions
         """
         if self.agent is None:
-            error_msg = "Agent not loaded. "
-            if os.environ.get('JUPYTER_AGENT_PATH'):
-                error_msg += f"Check JUPYTER_AGENT_PATH: {os.environ.get('JUPYTER_AGENT_PATH')}"
-            else:
-                error_msg += "Please create agent.py with your LangGraph agent or set JUPYTER_AGENT_PATH."
             yield {
-                "error": error_msg,
+                "error": not_loaded_message(self.load_error),
                 "status": "error"
             }
             return

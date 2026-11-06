@@ -13,7 +13,7 @@ from jupyter_server.utils import url_path_join
 import tornado
 from tornado.web import HTTPError
 
-from .agent_wrapper import get_agent
+from .agent_wrapper import AGENT_SETTING_HINT, get_agent
 
 # Thread pool for running blocking agent operations
 _executor = ThreadPoolExecutor(max_workers=4)
@@ -102,7 +102,7 @@ def _agent_readiness():
         error = getattr(agent, "load_error", None)
         if isinstance(error, str) and error:
             return "agent_not_loaded", False, f"Agent failed to load: {error}"
-        return "agent_not_loaded", False, "Agent module not found or failed to load"
+        return "agent_not_loaded", False, f"Agent not loaded. Set the agent ({AGENT_SETTING_HINT})."
     if not callable(getattr(obj, "astream", None)):
         return (
             "not_runnable",

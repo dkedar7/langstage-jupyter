@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DeepAgent Lab launcher script.
+langstage-jupyter launcher script.
 
 This script wraps the 'jupyter lab' command to automatically configure
 the Jupyter server settings and make them available to agents.

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.49 - 2026-11-06
+
+### Fixed
+- **A failed agent load answers chat with the real cause (gh #195).** When the configured
+  agent failed to load, every chat turn replied "Please create agent.py with your LangGraph
+  agent or set JUPYTER_AGENT_PATH". This package reads neither, and the reply left out the
+  load error that `/health` and the sidebar status line already showed. The reply is now
+  `Agent not loaded: <error>. Fix the agent (-a / LANGSTAGE_AGENT_SPEC / agent.spec in
+  langstage.toml), then press Reload agent.` Resumes get the same message, and `/health`
+  and the sidebar name the same settings when no cause was recorded.
+- Leftover old names in user-facing text: the load-failure note now says
+  `LANGSTAGE_AGENT_SPEC` (was `DEEPAGENT_AGENT_SPEC`), and the package description no
+  longer says "for DeepAgents".
+
 ## 0.6.48 - 2026-11-05
 
 ### Fixed

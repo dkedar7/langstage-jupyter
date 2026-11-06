@@ -312,7 +312,10 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
         addSystemMessage(message || 'Agent loaded but not ready to run a turn.');
       } else {
         setAgentStatus('error');
-        addSystemMessage(message || 'Agent not loaded. Please ensure agent.py is configured correctly.');
+        addSystemMessage(
+          message ||
+            'Agent not loaded. Set the agent (-a / LANGSTAGE_AGENT_SPEC / agent.spec in langstage.toml).'
+        );
       }
     } catch (error) {
       console.error('Error checking agent health:', error);
