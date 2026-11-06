@@ -616,15 +616,24 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
   };
 
   const handleResumeFromInterrupt = async (decisions: Decision[]) => {
+    const answeredId = pendingInterruptId;
     setPendingInterruptId(null);
     setIsLoading(true);
     const assistantMessageId = (Date.now() + 1).toString();
 
     try {
-      const response = await postStream('resume', {
-        decisions: decisions,
-        thread_id: threadId
-      });
+      let response: Response;
+      try {
+        response = await postStream('resume', {
+          decisions: decisions,
+          thread_id: threadId
+        });
+      } catch (error) {
+        // Refused before anything was sent (core #227): the approval is still
+        // pending, so keep its card answerable.
+        setPendingInterruptId(answeredId);
+        throw error;
+      }
       await readTurnStream(response, assistantMessageId, 'Resume');
     } catch (error) {
       console.error('Error resuming from interrupt:', error);

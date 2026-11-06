@@ -286,6 +286,12 @@ class ResumeHandler(APIHandler):
 
             agent = get_agent()
 
+            # An answer the approval middleware would refuse is never sent, so the
+            # same approval can be answered again (core #227).
+            problems = await agent.decision_problems(decisions, thread_id)
+            if problems:
+                raise HTTPError(400, "; ".join(problems))
+
             # Stream response
             self.set_header("Content-Type", "text/event-stream")
             self.set_header("Cache-Control", "no-cache")
