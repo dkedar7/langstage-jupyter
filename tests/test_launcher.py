@@ -489,7 +489,8 @@ class TestPortHandling:
         with pytest.raises(SystemExit) as exc:
             main()
         assert exc.value.code == 64  # usage error (ADR 0007)
-        assert "invalid --port value" in capsys.readouterr().out
+        out, err = capsys.readouterr()
+        assert "invalid --port value" in err and "invalid --port value" not in out  # gh #198
 
     def test_valid_port_is_not_duplicated(self, monkeypatch):
         calls = self._run_main(["--port=19191", "--no-browser"], monkeypatch)
@@ -1789,7 +1790,21 @@ class TestPortPinning:
             main()
         assert exc.value.code == 64  # usage error (ADR 0007)
         assert not ran
-        assert "invalid --port value" in capsys.readouterr().out
+        out, err = capsys.readouterr()
+        assert "invalid --port value" in err and "invalid --port value" not in out  # gh #198
+
+    def test_missing_jupyter_error_goes_to_stderr(self, monkeypatch, capsys):
+        # gh #198: a script capturing `2>>launch.err` got an empty log for this exit 1.
+        def missing(*a, **k):
+            raise FileNotFoundError("jupyter")
+        monkeypatch.setattr("langstage_jupyter.launcher._run_child", missing)
+        monkeypatch.setattr("sys.argv", ["langstage-jupyter", "--port", "18963", "--no-browser"])
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 1
+        out, err = capsys.readouterr()
+        assert "'jupyter' command not found" in err and "pip install jupyterlab" in err
+        assert "command not found" not in out
 
 
     @staticmethod

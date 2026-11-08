@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.51 - 2026-11-08
+
+### Fixed
+- **Launcher usage and launch errors go to stderr** (gh #198). The `invalid --port value`
+  usage error (exit 64) and the `'jupyter' command not found` failure (exit 1) printed to
+  stdout, unlike every other `ERROR:` line. A script capturing `2>>launch.err` now records
+  them.
+
 ## 0.6.50 - 2026-11-06
 
 ### Fixed
