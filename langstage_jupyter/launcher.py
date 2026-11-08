@@ -1385,7 +1385,8 @@ def main():
             print(
                 f"ERROR: invalid --port value: {raw!r}. Pass a port between 1 and 65535 "
                 "(the agent's notebook tools are pointed at it before the server starts, "
-                "so 0 = 'any free port' can't be used), or omit --port to auto-detect one."
+                "so 0 = 'any free port' can't be used), or omit --port to auto-detect one.",
+                file=sys.stderr,
             )
             sys.exit(EXIT_USAGE)  # a bad flag value is a usage error (ADR 0007)
 
@@ -1551,8 +1552,8 @@ def main():
         print("\n\nShutting down langstage-jupyter...")
         sys.exit(0)
     except FileNotFoundError:
-        print("ERROR: 'jupyter' command not found. Please install JupyterLab:")
-        print("  pip install jupyterlab")
+        print("ERROR: 'jupyter' command not found. Please install JupyterLab:", file=sys.stderr)
+        print("  pip install jupyterlab", file=sys.stderr)
         sys.exit(1)
 
 
