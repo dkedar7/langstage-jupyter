@@ -6,7 +6,7 @@ import importlib.util
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, Iterator, Optional
+from typing import Any, Callable, Dict, Iterator, Optional
 
 from dotenv import find_dotenv, load_dotenv
 # Resolve .env from the user's working (launch) directory, not the installed
@@ -350,7 +350,8 @@ class AgentWrapper:
         decisions: Optional[list] = None,
         config: Optional[Dict[str, Any]] = None,
         thread_id: Optional[str] = None,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
+        should_cancel: Optional[Callable[[], bool]] = None,
     ) -> Iterator[Dict[str, Any]]:
         """
         Execute the agent with either a message or resume from interrupt.
@@ -364,6 +365,9 @@ class AgentWrapper:
             config: Optional configuration for the agent
             thread_id: Optional thread ID for conversation history
             context: Optional context with current_directory and focused_widget
+            should_cancel: Optional callable checked while the turn runs; when it
+                returns True the run is cancelled at once and a ``cancelled`` chunk
+                ends the stream (gh #200).
 
         Yields:
             Dict containing chunks of the agent's response
@@ -410,7 +414,9 @@ class AgentWrapper:
             return
 
         try:
-            for chunk in stream_updates_sync(self._agui_agent, agui_msg, tid, resume=resume):
+            for chunk in stream_updates_sync(
+                self._agui_agent, agui_msg, tid, resume=resume, should_cancel=should_cancel
+            ):
                 yield chunk
         except Exception as e:
             yield {"error": f"Error executing agent: {str(e)}", "status": "error"}
@@ -439,7 +445,7 @@ class AgentWrapper:
             return []
         return decision_problems({"decisions": decisions}, pending[0])
 
-    def resume_from_interrupt(self, decisions: list, config: Optional[Dict[str, Any]] = None, thread_id: Optional[str] = None) -> Iterator[Dict[str, Any]]:
+    def resume_from_interrupt(self, decisions: list, config: Optional[Dict[str, Any]] = None, thread_id: Optional[str] = None, should_cancel: Optional[Callable[[], bool]] = None) -> Iterator[Dict[str, Any]]:
         """
         Resume execution after a human-in-the-loop interrupt.
 
@@ -453,10 +459,10 @@ class AgentWrapper:
         Yields:
             Dict containing chunks of the agent's response
         """
-        for chunk in self.execute(decisions=decisions, config=config, thread_id=thread_id):
+        for chunk in self.execute(decisions=decisions, config=config, thread_id=thread_id, should_cancel=should_cancel):
             yield chunk
 
-    def stream(self, message: str, config: Optional[Dict[str, Any]] = None, thread_id: Optional[str] = None, context: Optional[Dict[str, Any]] = None) -> Iterator[Dict[str, Any]]:
+    def stream(self, message: str, config: Optional[Dict[str, Any]] = None, thread_id: Optional[str] = None, context: Optional[Dict[str, Any]] = None, should_cancel: Optional[Callable[[], bool]] = None) -> Iterator[Dict[str, Any]]:
         """
         Stream responses from the agent.
 
@@ -471,7 +477,7 @@ class AgentWrapper:
         Yields:
             Dict containing chunks of the agent's response
         """
-        for chunk in self.execute(message=message, config=config, thread_id=thread_id, context=context):
+        for chunk in self.execute(message=message, config=config, thread_id=thread_id, context=context, should_cancel=should_cancel):
             yield chunk
 
 
