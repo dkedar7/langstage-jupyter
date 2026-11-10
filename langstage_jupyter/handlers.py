@@ -119,6 +119,11 @@ def _agent_readiness():
     return "healthy", True, "Agent is ready"
 
 
+def _is_cancelled(chunk) -> bool:
+    """True for the chunk that ends a cancelled turn (gh #200)."""
+    return isinstance(chunk, dict) and chunk.get("status") == "cancelled"
+
+
 class ChatHandler(APIHandler):
     """Handler for chat messages."""
 
@@ -190,18 +195,16 @@ class ChatHandler(APIHandler):
             def run_agent_stream():
                 """Run the blocking agent.stream() in a thread."""
                 try:
-                    for chunk in agent.stream(message, thread_id=thread_id, context=context):
-                        # Check if execution was cancelled
-                        if cancel_event.is_set():
-                            asyncio.run_coroutine_threadsafe(
-                                queue.put({"status": "cancelled", "message": "Execution cancelled by user"}),
-                                loop
-                            )
+                    for chunk in agent.stream(message, thread_id=thread_id, context=context, should_cancel=cancel_event.is_set):
+                        # Stop (gh #200): the stream itself cancels the in-flight run and
+                        # ends with a "cancelled" chunk. Belt and braces for a wrapper that
+                        # ignores should_cancel: never forward a chunk after the cancel.
+                        if cancel_event.is_set() and not _is_cancelled(chunk):
+                            chunk = {"status": "cancelled", "message": "Execution cancelled by user"}
+                        asyncio.run_coroutine_threadsafe(queue.put(chunk), loop)
+                        if _is_cancelled(chunk):
                             asyncio.run_coroutine_threadsafe(queue.put(None), loop)
                             return
-
-                        # Send chunk to async handler via queue
-                        asyncio.run_coroutine_threadsafe(queue.put(chunk), loop)
                     # Signal completion
                     asyncio.run_coroutine_threadsafe(queue.put(None), loop)
                 except Exception as e:
@@ -310,18 +313,16 @@ class ResumeHandler(APIHandler):
             def run_agent_resume():
                 """Run the blocking agent.resume_from_interrupt() in a thread."""
                 try:
-                    for chunk in agent.resume_from_interrupt(decisions, thread_id=thread_id):
-                        # Check if execution was cancelled
-                        if cancel_event.is_set():
-                            asyncio.run_coroutine_threadsafe(
-                                queue.put({"status": "cancelled", "message": "Execution cancelled by user"}),
-                                loop
-                            )
+                    for chunk in agent.resume_from_interrupt(decisions, thread_id=thread_id, should_cancel=cancel_event.is_set):
+                        # Stop (gh #200): the stream itself cancels the in-flight run and
+                        # ends with a "cancelled" chunk. Belt and braces for a wrapper that
+                        # ignores should_cancel: never forward a chunk after the cancel.
+                        if cancel_event.is_set() and not _is_cancelled(chunk):
+                            chunk = {"status": "cancelled", "message": "Execution cancelled by user"}
+                        asyncio.run_coroutine_threadsafe(queue.put(chunk), loop)
+                        if _is_cancelled(chunk):
                             asyncio.run_coroutine_threadsafe(queue.put(None), loop)
                             return
-
-                        # Send chunk to async handler via queue
-                        asyncio.run_coroutine_threadsafe(queue.put(chunk), loop)
                     # Signal completion
                     asyncio.run_coroutine_threadsafe(queue.put(None), loop)
                 except Exception as e:

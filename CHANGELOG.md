@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.52 - 2026-11-10
+
+### Fixed
+- **Stop aborts the turn at once** (gh #200). Stop used to set a flag that was checked
+  only when the next chunk arrived, and the stream was then abandoned without cancelling
+  the run. So "Execution cancelled by user" appeared only after the running step
+  finished, the graph's next step could still start and run its side effects after that,
+  and its result was left out of the thread history. Every Stop also logged "Task was
+  destroyed but it is pending!" and "aclose(): asynchronous generator is already running".
+  The stream now checks for Stop while it waits for the next chunk and cancels the run
+  right away (the approach langstage-vscode took in #93), so no later step starts and the
+  thread history holds only what the graph finished. A sync node or tool that is already
+  running in a worker thread can't be interrupted from Python: it finishes in the
+  background, but its result is discarded and the graph does not move on. The teardown no
+  longer logs those errors.
+
 ## 0.6.51 - 2026-11-08
 
 ### Fixed
