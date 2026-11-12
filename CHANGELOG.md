@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.53 - 2026-11-12
+
+### Fixed
+- **The next turn works after Stop during a tool call** (core #237). Stopping a turn
+  while a tool was running left the model's tool call in the thread with no result, and a
+  model provider can reject the next message on that thread. langstage-core 1.0.62 adds
+  a "cancelled" tool result for each unanswered call before the next turn starts. This
+  release requires `langstage-core>=1.0.62` so every install gets it.
+
 ## 0.6.52 - 2026-11-10
 
 ### Fixed
