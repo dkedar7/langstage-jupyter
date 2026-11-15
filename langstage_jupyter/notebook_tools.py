@@ -142,28 +142,192 @@ def _session_key(notebook_path: str) -> str:
     return path.casefold() if os.name == "nt" else path
 
 
+#: JupyterLab's serving root, recorded by the server extension when it loads (the agent
+#: runs in the server's process, so this is how the tools normally learn it).
+_SERVING_ROOT: Optional[str] = None
+
+#: server URL -> the root that server's ``/langstage-jupyter/health`` reported, for tools
+#: driven from another process (``None``: it answered without one).
+_REPORTED_ROOTS: dict[str, Optional[str]] = {}
+
+
+def absolute_root(root_dir) -> Optional[str]:
+    """A serving root as an absolute path, or None.
+
+    Jupyter Server's ``server_root_dir`` setting abbreviates the home directory to
+    ``~`` (it is what the UI shows), so it is expanded before anything is compared
+    against it."""
+    if not root_dir:
+        return None
+    return os.path.abspath(os.path.expanduser(str(root_dir)))
+
+
+def set_serving_root(root_dir: Optional[str]) -> None:
+    """Record the directory JupyterLab serves, so an absolute path can be placed (gh #203)."""
+    global _SERVING_ROOT
+    _SERVING_ROOT = absolute_root(root_dir)
+
+
+def _known_root() -> Optional[str]:
+    """The serving root if it is already known, without asking the server."""
+    return _SERVING_ROOT or _REPORTED_ROOTS.get(JUPYTER_SERVER_URL)
+
+
+def _serving_root() -> Optional[str]:
+    """The absolute directory the contents API serves, or None if it can't be learned.
+
+    In the server's process the extension recorded it. From another process the
+    server is asked once (``/langstage-jupyter/health``). With no server listening it
+    is the process cwd, the directory the disk fallback reads and writes."""
+    if _SERVING_ROOT:
+        return _SERVING_ROOT
+    if JUPYTER_SERVER_URL in _REPORTED_ROOTS:
+        return _REPORTED_ROOTS[JUPYTER_SERVER_URL]
+    try:
+        resp = requests.get(
+            f"{JUPYTER_SERVER_URL}/langstage-jupyter/health",
+            headers=_headers(),
+            timeout=_HTTP_TIMEOUT,
+        )
+    except requests.RequestException as e:
+        return os.getcwd() if _unreachable(e) else None
+    root = None
+    if getattr(resp, "status_code", None) == 200:
+        try:
+            root = resp.json().get("serving_root")
+        except Exception:
+            root = None
+    root = root if isinstance(root, str) and root else None
+    _REPORTED_ROOTS[JUPYTER_SERVER_URL] = root
+    return root
+
+
+def _under(path: str, root: str, pathmod=os.path) -> Optional[str]:
+    """``path`` relative to ``root`` (``/``-separated) if it is the root or inside it."""
+    path, root = pathmod.normpath(path), pathmod.normpath(root)
+    cpath, croot = pathmod.normcase(path), pathmod.normcase(root)
+    if cpath == croot:
+        return ""
+    prefix = croot if croot.endswith(pathmod.sep) else croot + pathmod.sep
+    if not cpath.startswith(prefix):
+        return None
+    # normcase only changes case (and, on Windows, `/` to `\`, which normpath already
+    # did), so the prefix has the same length in the original spelling.
+    return path[len(prefix):].replace(pathmod.sep, "/")
+
+
+def _host_relative(path: str, root: str, pathmod=os.path) -> Optional[str]:
+    """The root-relative form of an absolute host path, or None if it is outside the root.
+
+    Compared as written and again with symlinks resolved: the file tools report
+    resolved paths, and the serving root may be reached through a link (``/tmp`` on
+    macOS)."""
+    rel = _under(path, root, pathmod)
+    # A UNC path is not resolved: looking up a share that isn't the root's would only
+    # stall the tool on a network timeout before the same refusal.
+    if rel is None and pathmod is os.path and not path.startswith("\\\\"):
+        try:
+            rel = _under(os.path.realpath(path), os.path.realpath(root))
+        except OSError:
+            rel = None
+    return rel
+
+
+def _host_path(raw: str, pathmod=os.path) -> Optional[str]:
+    """``raw`` as an absolute host path if it is spelled as one on this platform.
+
+    Windows: drive-qualified (``C:\\a``, ``C:/a``, and ``/C:/a`` as a URI-style tool
+    writes it) or UNC. POSIX: a leading ``/``. A drive-relative ``C:a.ipynb`` is not
+    absolute and is refused by the caller."""
+    if pathmod.sep == "\\":
+        candidate = raw.replace("/", "\\")
+        stripped = candidate.lstrip("\\")
+        if re.match(r"^[A-Za-z]:\\", stripped):
+            return stripped
+        if raw.startswith("\\\\") and pathmod.splitdrive(candidate)[0]:
+            return candidate
+        return None
+    return raw if raw.startswith("/") else None
+
+
+_OUTSIDE = (
+    "{path!r} points outside the JupyterLab serving root. Use a path relative to the "
+    "root, without '..' segments or a drive/UNC prefix."
+)
+
+
+def _place(notebook_path: str, host: str) -> str:
+    """An absolute host path as its root-relative form, or :class:`PathOutsideRoot`."""
+    root = _serving_root()
+    rel = _host_relative(host, root) if root else None
+    if rel is None:
+        where = (
+            f"the JupyterLab serving root {root}"
+            if root
+            else "the JupyterLab serving root, which this server did not report"
+        )
+        raise PathOutsideRoot(
+            f"{notebook_path!r} is an absolute path outside {where}. Notebook tools "
+            "only reach notebooks under that root: pass a path relative to it, or an "
+            "absolute path inside it."
+        )
+    return _norm(rel)
+
+
 def _confine(notebook_path: str) -> str:
     """Normalize a tool's ``notebook_path`` and refuse one that leaves the serving root.
 
     A ``..`` segment used to escape it: ``requests`` collapsed ``/api/contents/../x``
     to a URL the server 404s, and the disk fallback then honored the ``..`` against
     the process cwd — so ``create_notebook("../x.ipynb")`` wrote outside the root and
-    reported success (gh #117). Any ``..`` segment (with ``/`` or ``\\``) and any
-    drive-qualified or UNC path is refused before the server or the disk is touched.
-    A leading ``/`` is kept as root-relative, the contents API's own convention.
+    reported success (gh #117). Any ``..`` segment (with ``/`` or ``\\``) is refused
+    before the server or the disk is touched.
+
+    An absolute host path means the file it names (gh #203). With
+    ``LANGSTAGE_VIRTUAL_MODE=false`` the agent's file tools speak absolute host paths,
+    and reading every leading ``/`` as root-relative sent ``/home/me/proj/a.ipynb`` to
+    ``<root>/home/me/proj/a.ipynb``: a nested copy was created, edited and run while
+    the user's notebook stayed untouched. Now:
+
+    * a drive-qualified or UNC path (Windows), in either mode, and a leading-``/``
+      path in direct mode, maps to its root-relative form when it is inside the
+      serving root and is refused when it is outside it. It is never re-rooted;
+    * in virtual mode a leading ``/`` stays root-relative, the contents API's and the
+      virtual file tools' convention, except for a path that is spelled as a host
+      path inside the serving root and names nothing under the root-relative reading
+      (a custom agent with a direct backend): that one is mapped too.
     """
     # Checked on the raw spelling: normalizing first would fold "sub/../../x" into
     # "../x" (still refused) but also "sub/../x" into "x", and a `..` is refused outright.
     raw = notebook_path.strip()
-    if (
-        ".." in re.split(r"[\\/]", raw)
-        or re.match(r"^[\\/]*[A-Za-z]:", raw)
-        or raw.lstrip("/").startswith("\\")
-    ):
-        raise PathOutsideRoot(
-            f"{notebook_path!r} points outside the JupyterLab serving root. Use a path "
-            "relative to the root, without '..' segments or a drive/UNC prefix."
-        )
+    if ".." in re.split(r"[\\/]", raw):
+        raise PathOutsideRoot(_OUTSIDE.format(path=notebook_path))
+
+    host = _host_path(raw)
+    legacy_refused = bool(
+        re.match(r"^[\\/]*[A-Za-z]:", raw) or raw.lstrip("/").startswith("\\")
+    )
+    if os.sep == "\\":
+        # Windows: a drive-qualified or UNC path is a host path in either mode.
+        if host is not None:
+            return _place(notebook_path, host)
+        if legacy_refused:  # drive-relative ("C:a.ipynb") or a lone leading backslash
+            raise PathOutsideRoot(_OUTSIDE.format(path=notebook_path))
+        return _norm(notebook_path)
+
+    if legacy_refused:  # a drive or UNC spelling on a platform without them
+        raise PathOutsideRoot(_OUTSIDE.format(path=notebook_path))
+    if host is not None:
+        if not config.VIRTUAL_MODE:
+            return _place(notebook_path, host)
+        # Virtual mode: `/x` is `<root>/x`, unless it is plainly a host path: inside
+        # the serving root as written, with no `<root>/<first segment>` for the
+        # root-relative reading to mean.
+        root = _known_root()
+        rel = _host_relative(host, root) if root else None
+        first = _norm(raw).split("/", 1)[0]
+        if rel and first and not os.path.lexists(os.path.join(root, first)):
+            return _norm(rel)
     return _norm(notebook_path)
 
 

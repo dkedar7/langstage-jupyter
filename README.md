@@ -307,6 +307,15 @@ pass your own `--notebook-dir` / `--ServerApp.root_dir`, or run plain `jupyter l
 differs from the pinned workspace, the launcher and the server log print a warning: file
 tools then use the workspace and notebook tools use the serving root.
 
+A notebook tool takes a path relative to the serving root. An absolute path that lies
+inside the serving root means the same notebook: with `LANGSTAGE_VIRTUAL_MODE=false` the
+file tools hand the agent absolute host paths (`/home/me/proj/analysis.ipynb`,
+`C:\Users\me\proj\analysis.ipynb`), and the notebook tools open that file. An absolute
+path outside the serving root is refused with an error that names the root; it is never
+copied under it. In the default virtual mode a leading `/` stays root-relative
+(`/analysis.ipynb` is `<root>/analysis.ipynb`), which is how the file tools spell paths in
+that mode.
+
 ## Environment Variables
 
 All configuration uses the `LANGSTAGE_` prefix (the pre-rename `DEEPAGENT_` names still resolve as deprecated fallbacks):

@@ -14,6 +14,7 @@ import tornado
 from tornado.web import HTTPError
 
 from .agent_wrapper import AGENT_SETTING_HINT, get_agent
+from .notebook_tools import absolute_root
 
 # Thread pool for running blocking agent operations
 _executor = ThreadPoolExecutor(max_workers=4)
@@ -387,6 +388,9 @@ class HealthHandler(APIHandler):
                 "agent_loaded": is_loaded,
                 "ready": ready,
                 "message": message,
+                # The directory the contents API serves. Notebook tools driven from
+                # another process ask for it to place an absolute path (gh #203).
+                "serving_root": absolute_root(self.settings.get("server_root_dir")),
             }
             if agent_name:
                 response["agent_name"] = agent_name
