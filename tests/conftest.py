@@ -71,6 +71,33 @@ def _reset_malformed_env_dedupe():
     getattr(_core_cfg, "_warned_malformed_env_value", set()).clear()
 
 
+@pytest.fixture(autouse=True)
+def _isolated_serving_root(tmp_path_factory):
+    """Give the notebook tools a known, empty serving root for each test (gh #203).
+
+    The tools place an absolute path against JupyterLab's serving root. In a real
+    session the server extension records it; a test that leaves it unset would ask a
+    server on the default port for it. Tests about the lookup itself clear it.
+
+    ``config.VIRTUAL_MODE`` decides how a leading ``/`` is read, so it is restored too:
+    a test that reloads ``config`` with the sandbox off must not leave it off for the
+    path tests that run after it."""
+    import langstage_jupyter.config as _cfg
+    from langstage_jupyter import notebook_tools as _nt
+
+    saved_virtual = _cfg.VIRTUAL_MODE
+    saved_root, saved_reported = _nt._SERVING_ROOT, dict(_nt._REPORTED_ROOTS)
+    _nt._SERVING_ROOT = str(tmp_path_factory.mktemp("serving-root"))
+    _nt._REPORTED_ROOTS.clear()
+    try:
+        yield
+    finally:
+        _cfg.VIRTUAL_MODE = saved_virtual
+        _nt._SERVING_ROOT = saved_root
+        _nt._REPORTED_ROOTS.clear()
+        _nt._REPORTED_ROOTS.update(saved_reported)
+
+
 @pytest.fixture
 def clean_env(monkeypatch):
     """

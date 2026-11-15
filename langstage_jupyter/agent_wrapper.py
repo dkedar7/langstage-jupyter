@@ -493,6 +493,10 @@ def set_serving_root(root_dir: Optional[str]) -> None:
     """Record JupyterLab's serving root, and warn if a pinned workspace differs (gh #150)."""
     global _SERVING_ROOT
     _SERVING_ROOT = str(root_dir) if root_dir else None
+    # The notebook tools place an absolute path against the same root (gh #203).
+    from . import notebook_tools
+
+    notebook_tools.set_serving_root(_SERVING_ROOT)
     if config.WORKSPACE_ROOT is not None:
         warn_if_roots_disagree(_SERVING_ROOT, str(config.WORKSPACE_ROOT))
 

@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.6.54 - 2026-11-15
+
+### Fixed
+- **Notebook tools open the notebook an absolute path names** (gh #203). With
+  `LANGSTAGE_VIRTUAL_MODE=false` the agent's file tools work in absolute host paths, and
+  the notebook tools read every leading `/` as relative to the serving root. A notebook
+  the file tools had just listed (`/home/me/proj/analysis.ipynb`) was reported "not
+  found", and `create_notebook`, `insert_code_cell` and `execute_cell` then created,
+  edited and ran a second notebook at `<root>/home/me/proj/analysis.ipynb` and reported
+  success, while the user's notebook stayed untouched. On Windows the same path
+  (`C:\Users\me\proj\analysis.ipynb`) was refused outright.
+  - An absolute path inside the serving root now means that notebook. This covers a
+    leading-`/` path in direct mode, and a drive-qualified or UNC path on Windows in
+    either mode (also written `C:/...` or `/C:/...`). The root is matched as written and
+    with symlinks resolved, and case-insensitively on Windows.
+  - An absolute path outside the serving root is refused with an error that names the
+    root. It is never re-rooted, so no nested copy is created. In direct mode on Linux
+    and macOS this includes `/analysis.ipynb`: write `analysis.ipynb`.
+  - The default virtual mode is unchanged: `/analysis.ipynb` is `<root>/analysis.ipynb`.
+    One addition for a custom agent that uses a direct backend while the setting says
+    virtual: a host path inside the serving root whose first segment names nothing under
+    the root is opened as the host path.
+  - Tools driven from another process learn the serving root from the server:
+    `GET /langstage-jupyter/health` now includes `serving_root`. If a server answers
+    without one (plain `jupyter lab` without the extension), an absolute path is refused
+    with a message saying so. With no server listening the root is the working
+    directory, where the disk fallback already reads and writes.
+
 ## 0.6.53 - 2026-11-12
 
 ### Fixed
