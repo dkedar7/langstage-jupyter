@@ -82,7 +82,7 @@ def test_custom_agent_example_binds_the_notebook_tools(tmp_path, monkeypatch):
     """#145: the recipe must give the agent the notebook tools the README advertises.
 
     The old recipe ended with `tools=[]`, so an agent built from it verbatim had the
-    filesystem tools but none of the eight notebook tools (create/insert/modify/delete/
+    filesystem tools but none of the notebook tools (create/insert/modify/delete/
     read/execute cells), and the README never said where they live. Execute the block
     and check the tools bound to the compiled graph.
     """
@@ -98,5 +98,5 @@ def test_custom_agent_example_binds_the_notebook_tools(tmp_path, monkeypatch):
 
     bound = set(graph.nodes["tools"].bound.tools_by_name)
     wanted = {getattr(t, "name", None) or t.__name__ for t in NOTEBOOK_TOOLS}
-    assert len(wanted) == 8
+    assert len(wanted) == 9
     assert wanted <= bound, f"missing notebook tools: {sorted(wanted - bound)}"

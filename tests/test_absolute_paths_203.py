@@ -267,6 +267,7 @@ def test_a_new_notebook_at_an_absolute_path_lands_in_the_root(direct, root, monk
     lambda p: nt.modify_cell(p, 0, "x = 2"),
     lambda p: nt.delete_cell(p, 0),
     lambda p: nt.read_cell(p, 0),
+    lambda p: nt.read_cell_outputs(p, 0),
     lambda p: nt.execute_cell(p, 0),
 ])
 def test_every_tool_refuses_an_absolute_path_outside_the_root(direct, root, monkeypatch, tool):

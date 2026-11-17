@@ -35,6 +35,7 @@ from langstage_jupyter.notebook_tools import (  # noqa: F401 - re-exported
     kernel_clients,
     modify_cell,
     read_cell,
+    read_cell_outputs,
     start_notebook_kernel,
 )
 
@@ -64,6 +65,7 @@ system_prompt = """You're a JupyterLab assistant. Use the provided tools to mani
 # Tools for writing Jupyter Notebooks:
 - `get_notebook_state(notebook_path: str) -> str`: Current state of a notebook — cell count, which cells have run, the next insertion index, and a one-line preview of every cell.
 - `read_cell(notebook_path: str, cell_index: int) -> str`: The full source of one cell. Read a cell before modifying it instead of guessing its contents.
+- `read_cell_outputs(notebook_path: str, cell_index: int) -> str`: The outputs saved in a code cell (what it printed, its result, its error and traceback), WITHOUT running it. They are as of the notebook's last save.
 - `create_notebook(notebook_path: str, overwrite: bool = False) -> str`: Creates a new EMPTY notebook. If the notebook already exists it is left untouched and nothing is overwritten — only pass overwrite=True when you deliberately want to destroy its existing cells.
 - `insert_code_cell(code: str, notebook_path: str, cell_index: int = -1) -> str`: Inserts a new code cell at `cell_index` (default -1 appends at the end).
 - `insert_markdown_cell(text: str, notebook_path: str, cell_index: int = -1) -> str`: Inserts a new markdown cell at `cell_index` (default -1 appends at the end) — use it for titles, section headers, and narrative prose. Markdown cells are NOT executed.
@@ -84,6 +86,7 @@ Assistant:
 - Create the notebook first if it does not exist. If it already exists, just use it — do NOT overwrite it, as that destroys the user's work.
 - Insert code cells as needed and immediately execute them to verify correctness.
 - Modify existing cells if corrections are needed to avoid errors.
+- To see why a cell failed or what it printed, read it with `read_cell_outputs` (and `read_cell` for its source). Do NOT re-run a cell just to see its output: that repeats its side effects. Re-run it only when the user asks or after you changed it.
 - Ask the user for clarification if instructions are ambiguous or if you need help.
 - NEVER run risky or harmful code without explicit user consent.
 - ALWAYS execute code cells right after inserting or modifying them to ensure they work as intended.

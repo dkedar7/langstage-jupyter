@@ -261,6 +261,21 @@ agent = create_deep_agent(
 Leave out `NOTEBOOK_TOOLS` and the agent can still read and write files, but it can't
 create, edit or run notebook cells.
 
+| Tool | What it does |
+|---|---|
+| `get_notebook_state` | Cell counts, which cells ran, a one-line preview of each cell, and the cells whose saved outputs hold an error |
+| `read_cell` | The full source of one cell |
+| `read_cell_outputs` | The outputs saved in a code cell (printed text, result, error and traceback) without running it |
+| `create_notebook` | A new empty notebook; never overwrites unless asked |
+| `insert_code_cell`, `insert_markdown_cell` | Add a cell at an index |
+| `modify_cell`, `delete_cell` | Replace a cell's source, or remove the cell |
+| `execute_cell` | Run a code cell in the notebook's kernel and store its outputs |
+
+`read_cell_outputs` is how the agent answers "why did cell 4 fail?" without running the
+cell again. It reads the notebook as last saved, so a run that JupyterLab has not saved
+yet is not visible to it. Long output keeps its start and its end (the error is at the
+end), and an image or other rich output is shown as a placeholder such as `<image/png>`.
+
 ### Configuring the Extension to Use Your Agent
 
 Set the `LANGSTAGE_AGENT_SPEC` environment variable to point to your agent:

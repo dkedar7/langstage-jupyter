@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.6.55 - 2026-11-17
+
+### Added
+- **The agent can read a cell's saved outputs** (gh #205). Asked "why did cell 4 fail?",
+  the agent had no way to see the error already in the notebook: `read_cell` returns the
+  source and `execute_cell` returns outputs only by running the cell again, which repeats
+  its side effects and may not reproduce the error.
+  - New tool `read_cell_outputs(notebook_path, cell_index)`, in `NOTEBOOK_TOOLS`. It
+    returns what the cell printed, its result, and its error with the traceback, as plain
+    text, without starting or using a kernel and without writing anything.
+  - The result says the outputs are the saved ones and gives the execution count
+    (`In[7]`). They are as of the notebook's last save, so a run JupyterLab has not saved
+    yet is not visible. A cell that never ran, and a markdown cell, say so.
+  - Long output is capped at about 8,000 characters. The middle is dropped and the start
+    and the end are kept, so the last traceback frame and the error survive.
+  - `get_notebook_state` lists the cells whose saved outputs hold an error, for example
+    `[4] KeyError: 'revenue'` (the first ten, then a count).
+  - The bundled agent's prompt tells it to read a failed cell's outputs and not to re-run
+    a cell only to see them.
+  - `read_cell` is unchanged: it still returns only the source. A custom agent gets the
+    new tool through `NOTEBOOK_TOOLS`, which now has nine tools.
+
+### Fixed
+- **An output with no text is a placeholder, never its raw data.** `execute_cell` returned
+  the whole MIME bundle, base64 image included, for a result that had no `text/plain`. It
+  now returns a placeholder naming the types, such as `<image/png>`, as the new tool does.
+  A display without text reads `[display] <image/png>` where it used to read
+  `[display] Rich content`.
+
 ## 0.6.54 - 2026-11-15
 
 ### Fixed
