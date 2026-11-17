@@ -624,7 +624,7 @@ def get_notebook_state(notebook_path: Annotated[str, "Notebook filename"]) -> st
     except NotebookNotFound:
         return f"Error: Notebook not found at {notebook_path}"
 
-    executed, unexecuted, previews = [], [], []
+    executed, unexecuted, previews, failed = [], [], [], []
     for idx, cell in enumerate(nb.cells):
         first = (cell.source or "").splitlines()[0] if (cell.source or "").strip() else ""
         previews.append(f"  [{idx}] ({cell.cell_type}) {first[:60]}")
@@ -633,6 +633,9 @@ def get_notebook_state(notebook_path: Annotated[str, "Notebook filename"]) -> st
                 executed.append(f"[{idx}] (count: {cell.execution_count})")
             else:
                 unexecuted.append(f"[{idx}]")
+            error = _saved_error(cell)
+            if error:
+                failed.append(f"  [{idx}] {error}")
 
     lines = [
         f"Notebook state for {notebook_path}:",
@@ -643,6 +646,12 @@ def get_notebook_state(notebook_path: Annotated[str, "Notebook filename"]) -> st
         f"- Unexecuted code cells: {', '.join(unexecuted) if unexecuted else 'None'}",
         f"- Next insertion index: {len(nb.cells)} (end of notebook)",
     ]
+    if failed:
+        # Where to look for "why did it fail?", without re-running anything (gh #205).
+        lines.append("- Cells with a saved error (read_cell_outputs shows the traceback):")
+        lines.extend(failed[:_MAX_LISTED_ERRORS])
+        if len(failed) > _MAX_LISTED_ERRORS:
+            lines.append(f"  ... and {len(failed) - _MAX_LISTED_ERRORS} more")
     if previews:
         lines.append("- Cells:")
         lines.extend(previews)
@@ -665,6 +674,49 @@ def read_cell(
         return err
     cell = nb.cells[cell_index]
     return f"Cell [{cell_index}] ({cell.cell_type}) in {notebook_path}:\n{cell.source}"
+
+
+@_tool_errors
+def read_cell_outputs(
+    notebook_path: Annotated[str, "Notebook filename"],
+    cell_index: Annotated[int, "Index of the code cell whose saved outputs to read"],
+) -> str:
+    """Return the outputs saved in a code cell, WITHOUT running it: what it printed,
+    its result, and its error with the traceback.
+
+    Use this to see why a cell failed or what it produced. Running the cell again
+    would repeat its side effects and may not reproduce the error. These are the
+    outputs as of the notebook's last save, so they can be older than the cell's
+    current source.
+    """
+    notebook_path = _confine(notebook_path)
+    try:
+        nb = _load_notebook(notebook_path)
+    except NotebookNotFound:
+        return f"Error: Notebook not found at {notebook_path}"
+    err = _check_index(nb, cell_index)
+    if err:
+        return err
+    idx = cell_index if cell_index >= 0 else len(nb.cells) + cell_index
+    cell = nb.cells[idx]
+    if cell.cell_type != "code":
+        return (
+            f"Cell [{idx}] in {notebook_path} is a {cell.cell_type} cell, so it has no "
+            "outputs. Use read_cell to read its text."
+        )
+    outputs = cell.get("outputs") or []
+    count = cell.get("execution_count")
+    if not outputs and count is None:
+        return (
+            f"Cell [{idx}] in {notebook_path} has no saved outputs: it has not been run, "
+            "its outputs were cleared, or a run in JupyterLab has not been saved yet."
+        )
+    ran = f" (In[{count}])" if count is not None else ""
+    text = "\n".join(_output_text(o) for o in outputs) or "(no output)"
+    return (
+        f"Saved outputs of cell [{idx}]{ran} in {notebook_path}, as of the notebook's "
+        f"last save (the cell was not run now):\n{_clip(text, SAVED_OUTPUT_BUDGET)}"
+    )
 
 
 @_tool_errors
@@ -1016,17 +1068,88 @@ def _plain(text: str) -> str:
     return _ANSI_CSI.sub("", text)
 
 
+def _text(value) -> str:
+    """A notebook string as one str. On disk nbformat allows a list of lines."""
+    if isinstance(value, (list, tuple)):
+        return "".join(str(v) for v in value)
+    return "" if value is None else str(value)
+
+
+def _bundle_text(data) -> str:
+    """The text a MIME bundle shows: its ``text/plain``, else a one-line placeholder
+    naming the types it holds. The bundle itself is never returned: an image is
+    base64, which used to reach the agent when a result had no ``text/plain``."""
+    if not isinstance(data, dict):
+        return _text(data)
+    if "text/plain" in data:
+        return _text(data["text/plain"])
+    return f"<{', '.join(sorted(str(k) for k in data)) or 'empty'}>"
+
+
 def _output_text(output) -> str:
-    """The one-line-per-output text the agent reads back from ``execute_cell``, as plain
-    text. The notebook's saved outputs keep their colors."""
-    kind = output["output_type"]
+    """The text the agent reads for one output, from ``execute_cell`` or from a cell's
+    saved outputs (``read_cell_outputs``), as plain text. The notebook's saved outputs
+    keep their colors. A saved notebook can be hand-edited or written by another tool,
+    so a missing field reads as empty instead of raising."""
+    kind = output.get("output_type")
     if kind == "stream":
-        return _plain(f"[{output['name']}] {output['text']}")
+        return _plain(f"[{output.get('name', 'stdout')}] {_text(output.get('text'))}")
     if kind == "execute_result":
-        return _plain(output["data"].get("text/plain", str(output["data"])))
+        return _plain(_bundle_text(output.get("data", {})))
     if kind == "display_data":
-        return _plain(f"[display] {output['data'].get('text/plain', 'Rich content')}")
-    return _plain(f"ERROR: {output['ename']}: {output['evalue']}\n" + "\n".join(output["traceback"]))
+        return _plain(f"[display] {_bundle_text(output.get('data', {}))}")
+    if kind == "error":
+        traceback = output.get("traceback") or []
+        if not isinstance(traceback, (list, tuple)):
+            traceback = [traceback]
+        return _plain(
+            f"ERROR: {_text(output.get('ename'))}: {_text(output.get('evalue'))}\n"
+            + "\n".join(_text(line) for line in traceback)
+        )
+    return f"[{kind or 'unknown'} output]"
+
+
+#: How much saved-output text one ``read_cell_outputs`` call returns, in characters.
+#: Past it the middle is dropped: the start says what the cell was doing, and the end
+#: holds the last traceback frame and the error itself.
+SAVED_OUTPUT_BUDGET = 8000
+
+#: How many failing cells ``get_notebook_state`` lists before "... and N more".
+_MAX_LISTED_ERRORS = 10
+
+
+def _clip(text: str, budget: int) -> str:
+    """``text`` within ``budget`` characters, keeping its head and (the larger part) its
+    tail, cut at line ends where one is near."""
+    if len(text) <= budget:
+        return text
+    head_len = budget // 3
+    tail_len = budget - head_len
+    head, tail = text[:head_len], text[-tail_len:]
+    cut = head.rfind("\n")
+    if cut >= head_len // 2:
+        head = head[:cut]
+    cut = tail.find("\n")
+    if 0 <= cut < tail_len // 2:
+        tail = tail[cut + 1:]
+    dropped = text[len(head):len(text) - len(tail)]
+    return (
+        f"{head}\n[... {len(dropped):,} characters ({dropped.count(chr(10)):,} lines) "
+        f"omitted from the middle ...]\n{tail}"
+    )
+
+
+def _saved_error(cell) -> Optional[str]:
+    """``"KeyError: 'revenue'"`` for a code cell whose saved outputs hold an error, on
+    one short line; None otherwise."""
+    for output in cell.get("outputs") or []:
+        if output.get("output_type") == "error":
+            name = _plain(_text(output.get("ename"))) or "Error"
+            value = " ".join(_plain(_text(output.get("evalue"))).split())
+            if len(value) > 80:
+                value = value[:79] + "\u2026"
+            return f"{name}: {value}" if value else name
+    return None
 
 
 def _collect(client, msg_id: str, run: _Run, deadline: float) -> bool:
@@ -1092,6 +1215,7 @@ def _interrupt_kernel(notebook_path: str) -> Optional[str]:
 NOTEBOOK_TOOLS = [
     get_notebook_state,
     read_cell,
+    read_cell_outputs,
     create_notebook,
     insert_code_cell,
     insert_markdown_cell,
