@@ -166,6 +166,9 @@ class LabConfig(HostConfig):
     model_temperature: float = 0.0
     virtual_mode: bool = True
     execute_timeout: float = 300.0
+    # The sidebar saves the focused notebook before each turn, so the notebook tools
+    # read the run the user is asking about rather than the last autosave (gh #207).
+    save_before_turn: bool = True
 
     _ENV: ClassVar[dict] = {
         "agent_module": ("DEEPAGENT_AGENT_MODULE", str),
@@ -189,6 +192,7 @@ class LabConfig(HostConfig):
         # turn the sandbox ON) silently turned it OFF, credited as [env] (gh #134).
         "virtual_mode": ("DEEPAGENT_VIRTUAL_MODE", _env_bool_strict),
         "execute_timeout": ("DEEPAGENT_EXECUTE_TIMEOUT", float),
+        "save_before_turn": ("DEEPAGENT_SAVE_BEFORE_TURN", _env_bool_strict),
     }
     _TOML: ClassVar[dict] = {
         "agent_module": "agent.module",
@@ -199,6 +203,7 @@ class LabConfig(HostConfig):
         "model_temperature": "model.temperature",
         "virtual_mode": "jupyter.virtual_mode",
         "execute_timeout": "jupyter.execute_timeout",
+        "save_before_turn": "jupyter.save_before_turn",
     }
 
     # Semantic checks core's resolve() runs after every layer; a value that raises here
@@ -406,3 +411,4 @@ VIRTUAL_MODE = _cfg.virtual_mode
 # jupyter.execute_timeout in langstage.toml both apply (the old get_config()
 # read only DEEPAGENT_EXECUTE_TIMEOUT). agent.py reads this constant.
 EXECUTE_TIMEOUT = _cfg.execute_timeout
+SAVE_BEFORE_TURN = _cfg.save_before_turn

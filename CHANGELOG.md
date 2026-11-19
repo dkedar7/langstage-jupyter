@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.6.56 - 2026-11-19
+
+### Changed
+- **The sidebar saves the notebook you're looking at before each turn** (gh #207). The
+  notebook tools read a notebook as last saved, and JupyterLab autosaves every two
+  minutes. So right after a run, "why did cell 0 fail?" got "no saved outputs" from
+  `read_cell_outputs`, and `get_notebook_state` listed the cell as never run.
+  - Before it sends a message, and before it sends an approval, the sidebar saves the
+    focused notebook if it has unsaved changes. This is the same save as Ctrl+S. Other
+    open tabs, read-only notebooks and clean notebooks are left alone.
+  - A failed save doesn't stop the turn: the sidebar says the agent sees the copy
+    last saved, and sends it. A save that takes longer than 5 seconds is left running
+    (for example behind JupyterLab's "file changed on disk" dialog), and the turn is
+    sent.
+  - The saved tab is clean, so a notebook the agent then writes in the same turn
+    reloads (gh #160). It's no longer skipped with "unsaved changes".
+  - To turn it off, set `save_before_turn = false` under `[jupyter]` in
+    `langstage.toml`, or `LANGSTAGE_SAVE_BEFORE_TURN=false`. `/health` reports the
+    setting as `save_before_turn`.
+
 ## 0.6.55 - 2026-11-17
 
 ### Added

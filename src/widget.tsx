@@ -5,6 +5,7 @@ import { IFileBrowserFactory } from '@jupyterlab/filebrowser';
 import { NotebookPanel } from '@jupyterlab/notebook';
 import { postStream, requestAPI } from './handler';
 import { AgentWriteTracker, reloadOpenDocument } from './reload';
+import { saveBeforeTurn, saveOutcomeNote } from './save';
 import {
   displayArgs,
   editDecisions,
@@ -263,6 +264,9 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
   // The assistant message whose interrupt awaits a decision. Only that card's
   // controls are live, so an answered card can't resume a later interrupt (gh #173).
   const [pendingInterruptId, setPendingInterruptId] = useState<string | null>(null);
+  // Save the focused notebook before each turn (gh #207). The server's /health says
+  // whether `jupyter.save_before_turn` is on; until it answers, it is on.
+  const saveBeforeTurnRef = useRef(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -292,6 +296,7 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
       // message instead of a green "ready" that fails on the first turn (gh #60).
       const message = response.message || '';
       setAgentStatusMessage(message);
+      saveBeforeTurnRef.current = response.save_before_turn !== false;
       if (response.ready) {
         setAgentStatus('healthy');
 
@@ -479,6 +484,25 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
     }
   };
 
+  /**
+   * Save the focused notebook if it has unsaved changes, so the agent's notebook
+   * tools read what the user sees (gh #207). A failed or slow save is noted in the
+   * sidebar and the turn is sent anyway.
+   */
+  const saveFocusedNotebook = async () => {
+    if (!saveBeforeTurnRef.current || !shell) {
+      return;
+    }
+    const current = shell.currentWidget;
+    if (!(current instanceof NotebookPanel)) {
+      return;
+    }
+    const note = saveOutcomeNote(await saveBeforeTurn(current.context));
+    if (note) {
+      addSystemMessage(note);
+    }
+  };
+
   const handleSendMessage = async () => {
     if (!inputValue.trim() || isLoading) return;
 
@@ -596,6 +620,7 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
     const assistantMessageId = (Date.now() + 1).toString();
 
     try {
+      await saveFocusedNotebook();
       const response = await postStream('chat', {
         message: savedInput,
         stream: true,
@@ -623,6 +648,8 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
 
     try {
       let response: Response;
+      // The user may have run cells while the approval waited.
+      await saveFocusedNotebook();
       try {
         response = await postStream('resume', {
           decisions: decisions,
