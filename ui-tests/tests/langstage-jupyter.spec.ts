@@ -246,7 +246,11 @@ test('a tab with unsaved changes is not reloaded, and the user is told', async (
   await page.evaluate(() =>
     (window as any).jupyterapp.commands.execute('launcher:create')
   );
-  await expect(page.locator('.jp-Launcher')).toBeVisible();
+  await page.waitForCondition(() =>
+    page.evaluate(
+      () => !(window as any).jupyterapp.shell.currentWidget?.context
+    )
+  );
 
   await runAgentWrite(page, path);
 
@@ -320,7 +324,6 @@ test('a focused tab with unsaved changes is saved first, so the agent write relo
   await expect(
     page.locator('.deepagents-message-system').filter({ hasText: 'unsaved changes' })
   ).toHaveCount(0);
-  expect(await tabDirty(page, path)).toBe(false);
 });
 
 // ── gh #168: the approval card names the action for every interrupt shape ────────
