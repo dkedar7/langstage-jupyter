@@ -272,8 +272,9 @@ create, edit or run notebook cells.
 | `execute_cell` | Run a code cell in the notebook's kernel and store its outputs |
 
 `read_cell_outputs` is how the agent answers "why did cell 4 fail?" without running the
-cell again. It reads the notebook as last saved, so a run that JupyterLab has not saved
-yet is not visible to it. Long output keeps its start and its end (the error is at the
+cell again. It reads the notebook as last saved. The sidebar saves the notebook you're
+looking at before each turn, so a run you just did is visible to it (set
+`save_before_turn = false` under `[jupyter]` in `langstage.toml` to turn that off). Long output keeps its start and its end (the error is at the
 end), and an image or other rich output is shown as a placeholder such as `<image/png>`.
 
 ### Configuring the Extension to Use Your Agent
@@ -342,6 +343,7 @@ All configuration uses the `LANGSTAGE_` prefix (the pre-rename `DEEPAGENT_` name
 | `LANGSTAGE_JUPYTER_SERVER_URL` | Jupyter server URL | Auto-detected | Manual config only |
 | `LANGSTAGE_JUPYTER_TOKEN` | Jupyter auth token | Auto-generated | Optional: pins the launcher's token |
 | `LANGSTAGE_MODEL_TEMPERATURE` | Default agent's sampling temperature | `0.0` | Optional |
+| `LANGSTAGE_SAVE_BEFORE_TURN` | Save the focused notebook before each turn (`jupyter.save_before_turn`) | `true` | Optional: `false` to leave saving to you |
 | `ANTHROPIC_API_KEY` | Anthropic API key | None | Required for default agent |
 
 When using the `langstage-jupyter` launcher, `LANGSTAGE_JUPYTER_SERVER_URL` and `LANGSTAGE_JUPYTER_TOKEN` are automatically configured and don't need to be set. To pin the launcher's token, set `LANGSTAGE_JUPYTER_TOKEN` (or `jupyter.token` in `langstage.toml`). The launcher picks the token in this order: `--IdentityProvider.token`, then `LANGSTAGE_JUPYTER_TOKEN` (legacy `DEEPAGENT_JUPYTER_TOKEN`, with a deprecation notice), then `JUPYTER_TOKEN`, then a generated one. The `.env.example` placeholder `change-me` is refused (exit 64), so a copied example never pins a guessable token.

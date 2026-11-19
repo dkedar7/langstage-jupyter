@@ -8,6 +8,7 @@ import {
   uniformDecisions
 } from '../../src/interrupt';
 import { SSELineBuffer, TurnAccumulator } from '../../src/stream';
+import { needsSave, saveBeforeTurn, saveOutcomeNote } from '../../src/save';
 
 /**
  * Unit tests for the sidebar's plain logic. They import `src/` directly and need
@@ -198,5 +199,78 @@ test.describe('approve, reject and edit decisions (gh #175)', () => {
         args: { command: 'pwd' }
       }
     ]);
+  });
+});
+
+test.describe('saveBeforeTurn (gh #207)', () => {
+  /** A stand-in for a notebook's document context. */
+  const context = (overrides: Record<string, any> = {}) => {
+    const calls = { save: 0 };
+    const ctx: any = {
+      path: 'analysis.ipynb',
+      isReady: true,
+      isDisposed: false,
+      model: { dirty: true, readOnly: false },
+      contentsModel: { writable: true },
+      save: async () => {
+        calls.save += 1;
+      },
+      ...overrides
+    };
+    return { ctx, calls };
+  };
+
+  test('saves a notebook with unsaved changes', async () => {
+    const { ctx, calls } = context();
+    expect(await saveBeforeTurn(ctx)).toEqual({ kind: 'saved', path: 'analysis.ipynb' });
+    expect(calls.save).toBe(1);
+  });
+
+  test('leaves a clean, read-only, unwritable or unready notebook alone', async () => {
+    for (const overrides of [
+      { model: { dirty: false } },
+      { model: { dirty: true, readOnly: true } },
+      { contentsModel: { writable: false } },
+      { isReady: false },
+      { isDisposed: true }
+    ]) {
+      const { ctx, calls } = context(overrides);
+      expect(needsSave(ctx)).toBe(false);
+      expect(await saveBeforeTurn(ctx)).toEqual({ kind: 'skipped' });
+      expect(calls.save).toBe(0);
+    }
+    expect(await saveBeforeTurn(null)).toEqual({ kind: 'skipped' });
+  });
+
+  test('a failed save is reported, never thrown', async () => {
+    const { ctx } = context({
+      save: async () => {
+        throw new Error('Permission denied');
+      }
+    });
+    const outcome = await saveBeforeTurn(ctx);
+    expect(outcome).toEqual({
+      kind: 'failed',
+      path: 'analysis.ipynb',
+      reason: 'Permission denied'
+    });
+    expect(saveOutcomeNote(outcome)).toBe(
+      'Could not save analysis.ipynb before this turn (Permission denied). ' +
+        'The agent sees the copy last saved.'
+    );
+  });
+
+  test('a save that hangs stops waiting at the timeout', async () => {
+    const { ctx } = context({ save: () => new Promise<void>(() => undefined) });
+    const started = Date.now();
+    const outcome = await saveBeforeTurn(ctx, 50);
+    expect(outcome).toEqual({ kind: 'timeout', path: 'analysis.ipynb' });
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(saveOutcomeNote(outcome)).toContain('still saving');
+  });
+
+  test('a successful or skipped save says nothing', () => {
+    expect(saveOutcomeNote({ kind: 'saved', path: 'a.ipynb' })).toBeNull();
+    expect(saveOutcomeNote({ kind: 'skipped' })).toBeNull();
   });
 });
