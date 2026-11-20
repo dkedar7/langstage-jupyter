@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.6.57 - 2026-11-19
+
+### Changed
+- **The sidebar saves every open notebook with unsaved changes before a turn**, not only
+  the one you're looking at (gh #207 follow-up). A run in another tab now reaches the
+  notebook tools too: ask "why did the sales cell fail?" from a different notebook and
+  `read_cell_outputs` sees the traceback.
+  - The saves run in parallel, each capped at 5 seconds, so many open tabs can't hold
+    up the turn. Failed or slow saves are listed in one sidebar note, and the turn is
+    sent anyway.
+  - Only notebooks are saved. Text files and other documents are left alone: the
+    notebook tools don't read them. Read-only and clean notebooks are skipped, as before.
+  - Saved tabs are clean, so an agent write to any of them in the same turn reloads it
+    (gh #160). "Unsaved changes" now only appears when you edit the tab while the turn
+    runs.
+  - Same switch: `save_before_turn = false` under `[jupyter]` turns it off.
+
 ## 0.6.56 - 2026-11-19
 
 ### Changed

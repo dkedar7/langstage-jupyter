@@ -393,7 +393,7 @@ class HealthHandler(APIHandler):
                 # The directory the contents API serves. Notebook tools driven from
                 # another process ask for it to place an absolute path (gh #203).
                 "serving_root": absolute_root(self.settings.get("server_root_dir")),
-                # Whether the sidebar saves the focused notebook before a turn (gh #207).
+                # Whether the sidebar saves open notebooks before a turn (gh #207).
                 "save_before_turn": bool(config.SAVE_BEFORE_TURN),
             }
             if agent_name:

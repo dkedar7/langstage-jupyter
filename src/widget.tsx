@@ -5,7 +5,7 @@ import { IFileBrowserFactory } from '@jupyterlab/filebrowser';
 import { NotebookPanel } from '@jupyterlab/notebook';
 import { postStream, requestAPI } from './handler';
 import { AgentWriteTracker, reloadOpenDocument } from './reload';
-import { saveBeforeTurn, saveOutcomeNote } from './save';
+import { saveOpenNotebooks, saveOutcomesNote } from './save';
 import {
   displayArgs,
   editDecisions,
@@ -264,7 +264,7 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
   // The assistant message whose interrupt awaits a decision. Only that card's
   // controls are live, so an answered card can't resume a later interrupt (gh #173).
   const [pendingInterruptId, setPendingInterruptId] = useState<string | null>(null);
-  // Save the focused notebook before each turn (gh #207). The server's /health says
+  // Save open notebooks before each turn (gh #207). The server's /health says
   // whether `jupyter.save_before_turn` is on; until it answers, it is on.
   const saveBeforeTurnRef = useRef(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -485,19 +485,22 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
   };
 
   /**
-   * Save the focused notebook if it has unsaved changes, so the agent's notebook
-   * tools read what the user sees (gh #207). A failed or slow save is noted in the
-   * sidebar and the turn is sent anyway.
+   * Save every open notebook with unsaved changes, so the agent's notebook tools read
+   * what the user sees (gh #207). The saves run in parallel, each capped, so many tabs
+   * can't stall the turn. A failed or slow save is noted once in the sidebar and the
+   * turn is sent anyway.
    */
-  const saveFocusedNotebook = async () => {
+  const saveNotebooksBeforeTurn = async () => {
     if (!saveBeforeTurnRef.current || !shell) {
       return;
     }
-    const current = shell.currentWidget;
-    if (!(current instanceof NotebookPanel)) {
-      return;
+    const contexts = [];
+    for (const widget of shell.widgets('main')) {
+      if (widget instanceof NotebookPanel) {
+        contexts.push(widget.context);
+      }
     }
-    const note = saveOutcomeNote(await saveBeforeTurn(current.context));
+    const note = saveOutcomesNote(await saveOpenNotebooks(contexts));
     if (note) {
       addSystemMessage(note);
     }
@@ -620,7 +623,7 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
     const assistantMessageId = (Date.now() + 1).toString();
 
     try {
-      await saveFocusedNotebook();
+      await saveNotebooksBeforeTurn();
       const response = await postStream('chat', {
         message: savedInput,
         stream: true,
@@ -649,7 +652,7 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
     try {
       let response: Response;
       // The user may have run cells while the approval waited.
-      await saveFocusedNotebook();
+      await saveNotebooksBeforeTurn();
       try {
         response = await postStream('resume', {
           decisions: decisions,

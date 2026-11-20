@@ -167,9 +167,14 @@ async function openSavedNotebook(
  * The sidebar sends a turn; during it the agent writes `path` and the sidebar
  * receives that tool call's frames. The write happens once the /chat request
  * arrives, as a real tool's does, so it comes after the sidebar's own save of the
- * focused notebook (gh #207).
+ * open notebooks (gh #207). `duringTurn` runs then too, before the write: what the
+ * user does while the agent works.
  */
-async function runAgentWrite(page: IJupyterLabPageFixture, path: string) {
+async function runAgentWrite(
+  page: IJupyterLabPageFixture,
+  path: string,
+  duringTurn?: () => Promise<void>
+) {
   const frames = [
     {
       status: 'streaming',
@@ -192,6 +197,9 @@ async function runAgentWrite(page: IJupyterLabPageFixture, path: string) {
     { status: 'complete', outcome: 'complete' }
   ];
   await page.route(CHAT_URL, async route => {
+    if (duringTurn) {
+      await duringTurn();
+    }
     await saveNotebook(page, path, [
       {
         cell_type: 'code',
@@ -236,23 +244,14 @@ test('a tab with unsaved changes is not reloaded, and the user is told', async (
 }) => {
   const path = `agent-write-dirty-${Date.now()}.ipynb`;
   await openSavedNotebook(page, path);
-  // The user has an unsaved edit in the tab...
-  await page.evaluate(() =>
-    (window as any).jupyterapp.commands.execute('notebook:insert-cell-below')
-  );
-  await page.waitForCondition(() => currentModelDirty(page));
-  // ...and is looking at another tab, so the sidebar doesn't save it before the turn
-  // (gh #207 saves only the focused notebook).
-  await page.evaluate(() =>
-    (window as any).jupyterapp.commands.execute('launcher:create')
-  );
-  await page.waitForCondition(() =>
-    page.evaluate(
-      () => !(window as any).jupyterapp.shell.currentWidget?.context
-    )
-  );
-
-  await runAgentWrite(page, path);
+  // Open tabs are saved before the turn (gh #207), so the tab can only have unsaved
+  // changes the agent's write would clobber if the user edits it during the turn.
+  await runAgentWrite(page, path, async () => {
+    await page.evaluate(() =>
+      (window as any).jupyterapp.commands.execute('notebook:insert-cell-below')
+    );
+    await page.waitForCondition(() => currentModelDirty(page));
+  });
 
   await expect(
     page.locator('.deepagents-message-system').filter({ hasText: 'unsaved changes' })
@@ -260,7 +259,7 @@ test('a tab with unsaved changes is not reloaded, and the user is told', async (
   expect(await tabDirty(page, path)).toBe(true);
 });
 
-// ── gh #207: the focused notebook is saved before a turn ─────────────────────────
+// ── gh #207: open notebooks are saved before a turn ──────────────────────────────
 //
 // The notebook tools read a notebook through the contents API, so they see it as
 // last saved. A run the user had just done sat in the dirty tab until autosave (two
@@ -324,6 +323,69 @@ test('a focused tab with unsaved changes is saved first, so the agent write relo
   await expect(
     page.locator('.deepagents-message-system').filter({ hasText: 'unsaved changes' })
   ).toHaveCount(0);
+});
+
+test('a notebook in another tab is saved too, with the error it just raised', async ({
+  page
+}) => {
+  const stamp = Date.now();
+  const failing = `save-unfocused-${stamp}.ipynb`;
+  const other = `save-unfocused-other-${stamp}.ipynb`;
+  await openSavedNotebook(page, failing, [
+    {
+      cell_type: 'code',
+      source: "sales = {'Jul': 120}\nsales['revenue']",
+      metadata: {},
+      execution_count: null,
+      outputs: []
+    }
+  ]);
+  await page.evaluate(() =>
+    (window as any).jupyterapp.commands.execute('notebook:run-cell')
+  );
+  await expect(
+    page.locator('.jp-NotebookPanel .jp-OutputArea-output', { hasText: 'KeyError' })
+  ).toBeVisible({ timeout: 30_000 });
+  await page.waitForCondition(() => currentModelDirty(page));
+
+  // The user moves on to another notebook before asking. (Opened by hand:
+  // openSavedNotebook expects a single notebook panel.)
+  await saveNotebook(page, other, []);
+  await page.evaluate(
+    notebookPath =>
+      (window as any).jupyterapp.commands.execute('docmanager:open', {
+        path: notebookPath
+      }),
+    other
+  );
+  await page.waitForCondition(() =>
+    page.evaluate(
+      notebookPath =>
+        (window as any).jupyterapp.shell.currentWidget?.context?.path === notebookPath,
+      other
+    )
+  );
+  expect(await tabDirty(page, failing)).toBe(true);
+
+  await stubStream(page, CHAT_URL, [
+    { status: 'streaming', chunk: 'Looking.', node: 'model', message_id: 'm1' },
+    { status: 'complete', outcome: 'complete' }
+  ]);
+  await sendInHealthyChat(page, 'why did the sales cell fail?');
+  await expect(
+    page.locator('.deepagents-message-assistant').filter({ hasText: 'Looking.' })
+  ).toBeVisible({ timeout: 15_000 });
+
+  // What the notebook tools read: the saved copy of the unfocused tab holds the traceback.
+  const saved = await page.evaluate(
+    async notebookPath =>
+      (await (window as any).jupyterapp.serviceManager.contents.get(notebookPath))
+        .content,
+    failing
+  );
+  const errors = saved.cells[0].outputs.filter((o: any) => o.output_type === 'error');
+  expect(errors.map((o: any) => o.ename)).toEqual(['KeyError']);
+  expect(await tabDirty(page, failing)).toBe(false);
 });
 
 // ── gh #168: the approval card names the action for every interrupt shape ────────

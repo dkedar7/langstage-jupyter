@@ -8,7 +8,13 @@ import {
   uniformDecisions
 } from '../../src/interrupt';
 import { SSELineBuffer, TurnAccumulator } from '../../src/stream';
-import { needsSave, saveBeforeTurn, saveOutcomeNote } from '../../src/save';
+import {
+  needsSave,
+  saveBeforeTurn,
+  saveOpenNotebooks,
+  saveOutcomeNote,
+  saveOutcomesNote
+} from '../../src/save';
 
 /**
  * Unit tests for the sidebar's plain logic. They import `src/` directly and need
@@ -272,5 +278,92 @@ test.describe('saveBeforeTurn (gh #207)', () => {
   test('a successful or skipped save says nothing', () => {
     expect(saveOutcomeNote({ kind: 'saved', path: 'a.ipynb' })).toBeNull();
     expect(saveOutcomeNote({ kind: 'skipped' })).toBeNull();
+  });
+});
+
+test.describe('saveOpenNotebooks: every open notebook, not just the focused one (gh #207)', () => {
+  const notebook = (path: string, overrides: Record<string, any> = {}) => {
+    const calls = { save: 0 };
+    const ctx: any = {
+      path,
+      isReady: true,
+      isDisposed: false,
+      model: { dirty: true, readOnly: false },
+      contentsModel: { writable: true },
+      save: async () => {
+        calls.save += 1;
+      },
+      ...overrides
+    };
+    return { ctx, calls };
+  };
+
+  test('saves two dirty tabs and leaves read-only and clean ones alone', async () => {
+    const a = notebook('a.ipynb');
+    const b = notebook('sub/b.ipynb');
+    const readOnly = notebook('ro.ipynb', { model: { dirty: true, readOnly: true } });
+    const clean = notebook('clean.ipynb', { model: { dirty: false } });
+    const outcomes = await saveOpenNotebooks([a.ctx, readOnly.ctx, b.ctx, clean.ctx, null]);
+    expect(outcomes).toEqual([
+      { kind: 'saved', path: 'a.ipynb' },
+      { kind: 'saved', path: 'sub/b.ipynb' }
+    ]);
+    expect([a.calls.save, b.calls.save, readOnly.calls.save, clean.calls.save]).toEqual([
+      1, 1, 0, 0
+    ]);
+    expect(saveOutcomesNote(outcomes)).toBeNull();
+  });
+
+  test('a context shown in two views is saved once', async () => {
+    const a = notebook('a.ipynb');
+    expect(await saveOpenNotebooks([a.ctx, a.ctx])).toHaveLength(1);
+    expect(a.calls.save).toBe(1);
+  });
+
+  test('one failing save does not stop the others, and is noted', async () => {
+    const ok = notebook('ok.ipynb');
+    const bad = notebook('bad.ipynb', {
+      save: async () => {
+        throw new Error('Permission denied');
+      }
+    });
+    const outcomes = await saveOpenNotebooks([bad.ctx, ok.ctx]);
+    expect(outcomes).toEqual([
+      { kind: 'failed', path: 'bad.ipynb', reason: 'Permission denied' },
+      { kind: 'saved', path: 'ok.ipynb' }
+    ]);
+    expect(ok.calls.save).toBe(1);
+    // A single problem reads exactly as the one-notebook note did.
+    expect(saveOutcomesNote(outcomes)).toBe(saveOutcomeNote(outcomes[0]));
+  });
+
+  test('hanging saves run in parallel, so the step waits about one timeout', async () => {
+    const hang = () => new Promise<void>(() => undefined);
+    const tabs = ['h1.ipynb', 'h2.ipynb', 'h3.ipynb', 'h4.ipynb'].map(p =>
+      notebook(p, { save: hang })
+    );
+    const started = Date.now();
+    const outcomes = await saveOpenNotebooks(
+      tabs.map(t => t.ctx),
+      200
+    );
+    // Serial saves would take 4 x 200 ms.
+    expect(Date.now() - started).toBeLessThan(700);
+    expect(outcomes.every(o => o.kind === 'timeout')).toBe(true);
+  });
+
+  test('several problems are listed in one note', () => {
+    expect(
+      saveOutcomesNote([
+        { kind: 'failed', path: 'a.ipynb', reason: 'Permission denied' },
+        { kind: 'saved', path: 'b.ipynb' },
+        { kind: 'failed', path: 'c.ipynb', reason: 'Disk full' },
+        { kind: 'timeout', path: 'd.ipynb' }
+      ])
+    ).toBe(
+      'Could not save a.ipynb (Permission denied), c.ipynb (Disk full) before this turn. ' +
+        'd.ipynb is still saving. The agent sees the copies last saved.'
+    );
+    expect(saveOutcomesNote([])).toBeNull();
   });
 });

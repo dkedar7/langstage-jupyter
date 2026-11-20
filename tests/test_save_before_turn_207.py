@@ -1,4 +1,4 @@
-"""The sidebar saves the focused notebook before a turn (gh #207).
+"""The sidebar saves open notebooks before a turn (gh #207).
 
 The save itself happens in the browser (``src/save.ts``, covered by the UI tests). The
 server side is the switch: ``jupyter.save_before_turn`` in ``langstage.toml`` or
