@@ -334,8 +334,7 @@ test('a notebook in another tab is saved too, with the error it just raised', as
   await openSavedNotebook(page, failing, [
     {
       cell_type: 'code',
-      source: "sales = {'Jul': 120}
-sales['revenue']",
+      source: "sales = {'Jul': 120}\nsales['revenue']",
       metadata: {},
       execution_count: null,
       outputs: []
