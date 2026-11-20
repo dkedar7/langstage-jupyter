@@ -166,7 +166,7 @@ class LabConfig(HostConfig):
     model_temperature: float = 0.0
     virtual_mode: bool = True
     execute_timeout: float = 300.0
-    # The sidebar saves the focused notebook before each turn, so the notebook tools
+    # The sidebar saves open notebooks before each turn, so the notebook tools
     # read the run the user is asking about rather than the last autosave (gh #207).
     save_before_turn: bool = True
 
