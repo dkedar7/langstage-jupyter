@@ -15,6 +15,12 @@ import {
   saveOutcomeNote,
   saveOutcomesNote
 } from '../../src/save';
+import {
+  AgentWriteTracker,
+  candidatePaths,
+  normalizePath,
+  samePath
+} from '../../src/reload';
 
 /**
  * Unit tests for the sidebar's plain logic. They import `src/` directly and need
@@ -365,5 +371,73 @@ test.describe('saveOpenNotebooks: every open notebook, not just the focused one 
         'd.ipynb is still saving. The agent sees the copies last saved.'
     );
     expect(saveOutcomesNote([])).toBeNull();
+  });
+});
+
+test.describe('agent-write paths (gh #211)', () => {
+  test('normalizePath folds the spellings the notebook tools accept', () => {
+    expect(normalizePath('a.ipynb')).toBe('a.ipynb');
+    expect(normalizePath('./a.ipynb')).toBe('a.ipynb');
+    expect(normalizePath('/a.ipynb')).toBe('a.ipynb');
+    expect(normalizePath('.//a.ipynb')).toBe('a.ipynb');
+    expect(normalizePath('sub/./b.ipynb')).toBe('sub/b.ipynb');
+    expect(normalizePath(' sub//b.ipynb/ ')).toBe('sub/b.ipynb');
+    expect(normalizePath(String.raw`sub\b.ipynb`)).toBe('sub/b.ipynb');
+    expect(normalizePath('.')).toBe('');
+  });
+
+  test('a root-relative spelling has one candidate', () => {
+    expect(candidatePaths('./a.ipynb', '/home/me/ws')).toEqual(['a.ipynb']);
+    expect(candidatePaths('sub/./b.ipynb', null)).toEqual(['sub/b.ipynb']);
+  });
+
+  test('an absolute path inside the serving root maps to its root-relative form', () => {
+    expect(candidatePaths('/home/me/ws/a.ipynb', '/home/me/ws')).toEqual([
+      'home/me/ws/a.ipynb',
+      'a.ipynb'
+    ]);
+    expect(candidatePaths('/home/me/ws/./sub//b.ipynb', '/home/me/ws/')).toContain(
+      'sub/b.ipynb'
+    );
+  });
+
+  test('an absolute path outside the serving root is not mapped', () => {
+    expect(candidatePaths('/home/me/other/a.ipynb', '/home/me/ws')).toEqual([
+      'home/me/other/a.ipynb'
+    ]);
+    // A sibling whose name starts with the root's is outside it.
+    expect(candidatePaths('/home/me/ws2/a.ipynb', '/home/me/ws')).toEqual([
+      'home/me/ws2/a.ipynb'
+    ]);
+    // Without a known root nothing is mapped.
+    expect(candidatePaths('/home/me/ws/a.ipynb', null)).toEqual(['home/me/ws/a.ipynb']);
+  });
+
+  test('Windows roots: drive letters, either separator, any case', () => {
+    const root = String.raw`C:\Users\me\ws`;
+    expect(candidatePaths(String.raw`C:\Users\me\ws\a.ipynb`, root)).toContain('a.ipynb');
+    expect(candidatePaths('c:/users/ME/ws/sub/b.ipynb', root)).toContain('sub/b.ipynb');
+    expect(candidatePaths(String.raw`D:\ws\a.ipynb`, root)).not.toContain('a.ipynb');
+    expect(
+      candidatePaths(String.raw`\\host\share\ws\a.ipynb`, String.raw`\\host\share\ws`)
+    ).toContain('a.ipynb');
+  });
+
+  test('samePath ignores case only on a Windows server', () => {
+    expect(samePath('A.ipynb', 'a.ipynb', String.raw`C:\ws`)).toBe(true);
+    expect(samePath('A.ipynb', 'a.ipynb', '/home/me/ws')).toBe(false);
+    expect(samePath('./sub/a.ipynb', 'sub/a.ipynb', '/home/me/ws')).toBe(true);
+  });
+
+  test('the tracker keeps the spelling until the result, and skips non-writes', () => {
+    const tracker = new AgentWriteTracker();
+    tracker.noteCalls([
+      { id: '1', name: 'insert_code_cell', args: { notebook_path: './a.ipynb' } },
+      { id: '2', name: 'read_notebook', args: { notebook_path: 'b.ipynb' } },
+      { id: '3', name: 'modify_cell', args: { notebook_path: './' } }
+    ]);
+    expect(tracker.takeResult('2')).toBeUndefined();
+    expect(tracker.takeResult('3')).toBeUndefined();
+    expect(tracker.takeResult('1')).toBe('./a.ipynb');
   });
 });

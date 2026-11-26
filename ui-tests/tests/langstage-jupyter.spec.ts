@@ -173,7 +173,8 @@ async function openSavedNotebook(
 async function runAgentWrite(
   page: IJupyterLabPageFixture,
   path: string,
-  duringTurn?: () => Promise<void>
+  duringTurn?: () => Promise<void>,
+  toolPath: string = path
 ) {
   const frames = [
     {
@@ -182,7 +183,7 @@ async function runAgentWrite(
         {
           id: 'call-1',
           name: 'insert_code_cell',
-          args: { code: `print('${AGENT_TEXT}')`, notebook_path: path }
+          args: { code: `print('${AGENT_TEXT}')`, notebook_path: toolPath }
         }
       ]
     },
@@ -237,6 +238,37 @@ test('an open notebook reloads after an agent tool writes it', async ({
   await expect(
     page.locator('.jp-NotebookPanel .jp-OutputArea-output', { hasText: AGENT_TEXT })
   ).toBeVisible();
+});
+
+// gh #211: the notebook tools accept other spellings of the same notebook
+// (`./a.ipynb` since #187, an absolute path inside the serving root since #203),
+// and the open tab must reload for those too.
+test('an open notebook reloads when the agent spells its path ./name', async ({
+  page
+}) => {
+  const path = `agent-write-dot-${Date.now()}.ipynb`;
+  await openSavedNotebook(page, path);
+
+  await runAgentWrite(page, path, undefined, `./${path}`);
+
+  await expect(agentCell(page)).toHaveCount(1, { timeout: 15_000 });
+});
+
+test('an open notebook reloads when the agent uses its absolute path', async ({
+  page
+}) => {
+  const path = `agent-write-abs-${Date.now()}.ipynb`;
+  await openSavedNotebook(page, path);
+  const root: string = await page.evaluate(async () => {
+    const response = await fetch('/langstage-jupyter/health');
+    return (await response.json()).serving_root;
+  });
+  const sep = root.includes('\\') ? '\\' : '/';
+  const absolute = `${root.replace(/[\\/]+$/, '')}${sep}${path}`;
+
+  await runAgentWrite(page, path, undefined, absolute);
+
+  await expect(agentCell(page)).toHaveCount(1, { timeout: 15_000 });
 });
 
 test('a tab with unsaved changes is not reloaded, and the user is told', async ({
