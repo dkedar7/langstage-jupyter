@@ -4,7 +4,7 @@ import { JupyterFrontEnd } from '@jupyterlab/application';
 import { IFileBrowserFactory } from '@jupyterlab/filebrowser';
 import { NotebookPanel } from '@jupyterlab/notebook';
 import { postStream, requestAPI } from './handler';
-import { AgentWriteTracker, reloadOpenDocument } from './reload';
+import { AgentWriteTracker, candidatePaths, reloadOpenDocument } from './reload';
 import { saveOpenNotebooks, saveOutcomesNote } from './save';
 import {
   displayArgs,
@@ -297,6 +297,10 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
       const message = response.message || '';
       setAgentStatusMessage(message);
       saveBeforeTurnRef.current = response.save_before_turn !== false;
+      // Where JupyterLab serves from, so an agent write through an absolute path
+      // reloads the open tab it names (gh #211).
+      writeTracker.current.servingRoot =
+        typeof response.serving_root === 'string' ? response.serving_root : null;
       if (response.ready) {
         setAgentStatus('healthy');
 
@@ -346,10 +350,14 @@ const ChatComponent: React.FC<ChatComponentProps> = ({ shell, browserFactory, on
   // (send stream) from its result (resume stream).
   const writeTracker = useRef(new AgentWriteTracker());
   const reloadAgentWrite = async (path: string) => {
-    const { skippedDirty } = await reloadOpenDocument(shell, path);
+    const root = writeTracker.current.servingRoot;
+    const { skippedDirty } = await reloadOpenDocument(shell, path, root);
     if (skippedDirty > 0) {
+      // Name the notebook the way the file browser does, not the tool's spelling.
+      const names = candidatePaths(path, root);
+      const name = names[names.length - 1] ?? path;
       addSystemMessage(
-        `The agent changed ${path}, but its open tab has unsaved changes, so it was ` +
+        `The agent changed ${name}, but its open tab has unsaved changes, so it was ` +
           "not reloaded. Saving that tab would overwrite the agent's version. To see " +
           "the agent's version, use File > Reload Notebook from Disk (this discards " +
           'the unsaved changes).'

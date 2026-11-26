@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.6.58 - 2026-11-26
+
+### Fixed
+- **An open notebook tab now reloads whichever way the agent spells its path** (gh #211).
+  The reload after an agent write (gh #160) matched only the exact spelling of the
+  tab's path. A write through `./a.ipynb`, `sub/./b.ipynb` or an absolute path inside
+  the serving root changed the file, but the tab kept its old copy. The next save then
+  raised JupyterLab's "File Changed" dialog, and **Overwrite** threw the agent's cells
+  away.
+  - The sidebar now folds the spellings the notebook tools accept (gh #187): `./`,
+    repeated `/`, `.` segments and `\` separators.
+  - It maps an absolute path inside the serving root to the notebook it names
+    (gh #203), using the root that `/health` reports. On a Windows server the match
+    ignores case, as the file system does.
+  - The "unsaved changes, not reloaded" note names the notebook as the file browser
+    does, not as the tool spelled it.
+
 ## 0.6.57 - 2026-11-19
 
 ### Changed
